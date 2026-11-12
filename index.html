@@ -2647,6 +2647,37 @@ const firebaseConfig = {
       const samples = [
         {
           title: "Sumatif Tengah Semester (STS)",
+          grade: "Fase A - SD/MI Kelas 2",
+          subject: "Bahasa Indonesia",
+          topic: "Membaca Nyaring Cerita Fabel, Mengenal Kosakata Baru, Kalimat Ajakan dan Permintaan Tolong, serta Mengamati Gambar Kegiatan Sehari-hari."
+        },
+        {
+          title: "Sumatif Akhir Semester (SAS)",
+          grade: "Fase B - SD/MI Kelas 4",
+          subject: "IPAS (Ilmu Pengetahuan Alam dan Sosial)",
+          topic: "Wujud Zat dan Perubahannya, Siklus Air, Fotosintesis pada Tumbuhan, Gaya dan Gerak dalam Kehidupan Sehari-hari, serta Keragaman Budaya Daerah."
+        },
+        {
+          title: "Penilaian Harian Terpadu",
+          grade: "Fase C - SD/MI Kelas 6",
+          subject: "IPAS (Ilmu Pengetahuan Alam dan Sosial)",
+          topic: "Sistem Tata Surya, Gerak Rotasi dan Revolusi Bumi, Krisis Energi & Energi Terbarukan, serta Pelestarian Ekosistem Hutan dan Laut."
+        },
+        {
+          title: "Asesmen Sumatif Lingkup Materi",
+          grade: "Fase D - SMP/MTs Kelas 8",
+          subject: "Matematika",
+          topic: "Sistem Persamaan Linear Dua Variabel (SPLDV), Teorema Pythagoras, Statistika (Diagram Batang, Garis, Lingkaran), dan Peluang Empiris."
+        }
+      ];
+      const pick = samples[Math.floor(Math.random() * samples.length)];
+      document.getElementById("gen-title").value = pick.title;
+      document.getElementById("gen-grade").value = pick.grade;
+      document.getElementById("gen-subject").value = pick.subject;
+      document.getElementById("gen-topic").value = pick.topic;
+      showToast(`Contoh topik "${pick.subject} (${pick.grade})" berhasil dimuat!`, "info");
+    };
+
     // Call Gemini API with Multi-Key Rotation, Auto Model Discovery & Graceful Fallback
     async function callGeminiWithMultiKeyFailover(promptText, selectedModel) {
       const realKeys = stateApiKeys.filter(k => k.key && !k.key.startsWith("AIzaSyDEMO"));
