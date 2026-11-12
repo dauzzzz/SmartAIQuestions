@@ -1072,7 +1072,7 @@
 
                 <!-- Quick Inline Add API Key -->
                 <div class="pt-2 border-t border-slate-100">
-                  <label class="block text-[11px] font-bold text-slate-600 mb-1.5">Tambah Cepat API Key Gemini (`AIzaSy...`):</label>
+                  <label class="block text-[11px] font-bold text-slate-600 mb-1.5">Tambah Cepat API Key Gemini (`AQ.Ab8RN...` / `AIzaSy...`):</label>
                   <div class="flex gap-2">
                     <input type="password" id="quick-api-key-input" placeholder="Tempel Gemini API Key di sini..." class="flex-1 px-3 py-1.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
                     <button type="button" onclick="window.quickAddApiKey()" class="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shrink-0">
@@ -1220,7 +1220,7 @@
                 <div>
                   <span class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700 uppercase">Multi-Key Load Balancer + Auto Model Discovery</span>
                   <h3 class="text-base font-extrabold text-slate-900 mt-1">Manajemen Multi-API Key Google Gemini</h3>
-                  <p class="text-xs text-slate-500 mt-0.5">Tambahkan lebih dari 1 API Key (Format Google AI Studio: diawali <code>AIzaSy...</code>). Sistem otomatis mencari model aktif (anti-404) &amp; beralih ke Key berikutnya jika kuota penuh.</p>
+                  <p class="text-xs text-slate-500 mt-0.5">Mendukung penuh API Key Google AI Studio format terbaru (<code>AQ.Ab8RN...</code>) maupun klasik (<code>AIzaSy...</code>). Sistem otomatis mencari model aktif (anti-404) &amp; beralih ke Key berikutnya jika kuota penuh.</p>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                   <button onclick="window.resetAllApiKeysStatus()" class="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5" title="Reset semua status LIMIT kembali menjadi READY">
@@ -1240,7 +1240,7 @@
                     <input type="text" id="new-key-label" required placeholder="Label (mis: Key Utama 1)" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white" />
                   </div>
                   <div class="sm:col-span-2 flex gap-2">
-                    <input type="password" id="new-key-value" required placeholder="AIzaSy..." class="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-mono" />
+                    <input type="password" id="new-key-value" required placeholder="AQ.Ab8RN... atau AIzaSy..." class="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-mono" />
                     <button type="submit" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shrink-0">
                       + Tambah Key
                     </button>
@@ -2113,6 +2113,13 @@ const firebaseConfig = {
       return String(rawKey).trim().replace(/^["']+|["']+$/g, "").replace(/\s+/g, "");
     }
 
+    // Validasi apakah format key merupakan API Key resmi Google AI Studio (Format baru `AQ.Ab8RN...` atau klasik `AIzaSy...`)
+    function isValidGeminiApiKeyFormat(rawKey) {
+      const clean = sanitizeApiKey(rawKey);
+      if (!clean || clean.length < 16) return false;
+      return clean.startsWith("AQ.") || clean.startsWith("AIza");
+    }
+
     function maskApiKey(rawKey) {
       if (!rawKey || rawKey.length < 10) return "••••••••";
       return rawKey.substring(0, 8) + "••••••••••••" + rawKey.substring(rawKey.length - 4);
@@ -2123,43 +2130,46 @@ const firebaseConfig = {
       const cleanKey = sanitizeApiKey(apiKey);
       const preferredOrder = [
         "gemini-2.5-flash",
+        "gemini-flash-latest",
         "gemini-2.5-pro",
         "gemini-2.5-flash-lite",
+        "gemini-3-flash-preview",
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro"
+        "gemini-1.5-flash"
       ];
 
-      const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cleanKey)}`;
-      const res = await fetch(listUrl, { method: "GET" });
+      try {
+        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cleanKey)}`;
+        const res = await fetch(listUrl, {
+          method: "GET",
+          headers: { "x-goog-api-key": cleanKey }
+        });
 
-      if (!res.ok) {
-        let errDetail = `HTTP ${res.status}`;
-        try {
-          const errJson = await res.json();
-          if (errJson?.error?.message) errDetail = errJson.error.message;
-        } catch (_) {}
-        throw new Error(errDetail);
-      }
-
-      const data = await res.json();
-      const available = (data.models || [])
-        .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
-        .map(m => String(m.name || "").replace(/^models\//, ""))
-        .filter(name => name.startsWith("gemini"));
-
-      // Sort by preferredOrder first, then keep any other valid gemini models
-      const sorted = [];
-      preferredOrder.forEach(pref => {
-        if (available.includes(pref)) sorted.push(pref);
-      });
-      available.forEach(m => {
-        if (!sorted.includes(m) && !m.includes("vision") && !m.includes("embedding") && !m.includes("tts") && !m.includes("image")) {
-          sorted.push(m);
+        if (!res.ok) {
+          return preferredOrder;
         }
-      });
 
-      return sorted.length > 0 ? sorted : ["gemini-2.5-flash", "gemini-2.5-pro"];
+        const data = await res.json();
+        const available = (data.models || [])
+          .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
+          .map(m => String(m.name || "").replace(/^models\//, ""))
+          .filter(name => name.startsWith("gemini"));
+
+        const sorted = [];
+        preferredOrder.forEach(pref => {
+          if (available.includes(pref)) sorted.push(pref);
+        });
+        available.forEach(m => {
+          if (!sorted.includes(m) && !m.includes("vision") && !m.includes("embedding") && !m.includes("tts") && !m.includes("image") && !m.includes("audio")) {
+            sorted.push(m);
+          }
+        });
+
+        return sorted.length > 0 ? sorted : preferredOrder;
+      } catch (_) {
+        // Jika endpoint /models dibatasi untuk key jenis tertentu, tetap kembalikan daftar kandidat model utama
+        return preferredOrder;
+      }
     }
 
     function renderGeneratorApiKeys() {
@@ -2206,7 +2216,8 @@ const firebaseConfig = {
 
       container.innerHTML = stateApiKeys.map((item, idx) => {
         const cleanK = sanitizeApiKey(item.key);
-        const isNonStandardFormat = cleanK && !cleanK.startsWith("AIza");
+        const isAqFormat = cleanK.startsWith("AQ.");
+        const isNonStandardFormat = cleanK && !isValidGeminiApiKeyFormat(cleanK);
         return `
         <div class="p-3.5 rounded-2xl border ${item.status === 'limit' ? 'border-red-200 bg-red-50/20' : 'border-slate-200 bg-white'} flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div class="space-y-1 min-w-0">
@@ -2216,7 +2227,8 @@ const firebaseConfig = {
               <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${item.status === 'limit' ? 'bg-red-100 text-red-700' : item.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}">
                 ${escapeHtml((item.status || 'ready').toUpperCase())}
               </span>
-              ${isNonStandardFormat ? `<span class="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-bold"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Format Bukan AIzaSy...</span>` : ""}
+              ${isAqFormat ? `<span class="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold"><i class="fa-solid fa-shield-check mr-1"></i>AI Studio Key (AQ.)</span>` : ""}
+              ${isNonStandardFormat ? `<span class="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-bold"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Cek Format Key</span>` : ""}
             </div>
             <div class="text-[11px] font-mono text-slate-500 break-all">${maskApiKey(cleanK)} • Status: <span class="${item.status === 'limit' ? 'text-red-600 font-semibold' : 'text-slate-700'}">${escapeHtml(item.lastUsed || 'Siap')}</span></div>
           </div>
@@ -2248,7 +2260,7 @@ const firebaseConfig = {
       }
       await persistSettingsToFirestore();
       refreshAllViews();
-      showToast("Status seluruh API Key telah di-reset menjadi READY & model diarahkan ke gemini-2.5-flash!", "success");
+      showToast("Status seluruh API Key telah di-reset menjadi READY & siap digunakan!", "success");
     };
 
     window.quickAddApiKey = async function() {
@@ -2258,15 +2270,15 @@ const firebaseConfig = {
         showToast("Masukkan API Key Gemini terlebih dahulu.", "warning");
         return;
       }
-      if (!val.startsWith("AIza")) {
-        showToast("Perhatian: API Key Google AI Studio umumnya diawali dengan 'AIzaSy...'. Pastikan Anda menyalin API Key yang benar.", "warning");
+      if (!isValidGeminiApiKeyFormat(val)) {
+        showToast("Perhatian: API Key Google AI Studio umumnya diawali dengan 'AQ.Ab8RN...' atau 'AIzaSy...'.", "warning");
       }
       stateApiKeys.push({
         id: "key-" + Date.now(),
         label: `Gemini API Key #${stateApiKeys.length + 1}`,
         key: val,
         status: "ready",
-        lastUsed: "Baru ditambahkan"
+        lastUsed: "Baru ditambahkan (Siap)"
       });
       input.value = "";
       await persistSettingsToFirestore();
@@ -2280,8 +2292,8 @@ const firebaseConfig = {
       const key = sanitizeApiKey(document.getElementById("new-key-value").value);
       if (!label || !key) return;
 
-      if (!key.startsWith("AIza")) {
-        showToast("Catatan: Key yang Anda masukkan tidak diawali 'AIzaSy...'. Pastikan mengambil API Key dari aistudio.google.com/app/apikey", "warning");
+      if (!isValidGeminiApiKeyFormat(key)) {
+        showToast("Catatan: Pastikan API Key diambil dari Google AI Studio (diawali 'AQ.Ab8RN...' atau 'AIzaSy...').", "warning");
       }
 
       stateApiKeys.push({
@@ -2325,33 +2337,34 @@ const firebaseConfig = {
         return;
       }
 
-      if (!item.key.startsWith("AIza")) {
-        item.status = "limit";
-        item.lastUsed = "Format Key tidak valid (Wajib diawali 'AIzaSy...' dari Google AI Studio)";
-        await persistSettingsToFirestore();
-        refreshAllViews();
-        showToast(`${item.label}: Format Key "${item.key.substring(0, 8)}..." bukan API Key Google AI Studio. Ambil key yang diawali "AIzaSy..." di aistudio.google.com/app/apikey`, "error");
-        return;
-      }
-
       showToast(`Menguji koneksi & mendeteksi model aktif untuk ${item.label}...`, "info");
       try {
-        // Step 1: Discover available models on this API key (prevents HTTP 404 on deprecated models like gemini-2.0-flash)
+        // Step 1: Discover available models on this API key (supports both `AQ.Ab8RN...` and `AIzaSy...`)
         const discoveredModels = await discoverAvailableGeminiModels(item.key);
-        const preferredModel = stateSchoolSettings.selectedModel || "gemini-2.5-flash";
+        const preferredModel = (stateSchoolSettings.selectedModel && stateSchoolSettings.selectedModel !== "gemini-2.0-flash")
+          ? stateSchoolSettings.selectedModel
+          : "gemini-2.5-flash";
+
         const candidateModels = [
-          ...(discoveredModels.includes(preferredModel) ? [preferredModel] : []),
+          preferredModel,
+          "gemini-2.5-flash",
+          "gemini-flash-latest",
+          "gemini-2.5-pro",
+          "gemini-2.5-flash-lite",
           ...discoveredModels
-        ].filter((v, i, a) => a.indexOf(v) === i);
+        ].filter((v, i, a) => v && a.indexOf(v) === i);
 
         let workingModel = null;
         let lastErrText = "";
 
-        for (const testModel of candidateModels.slice(0, 4)) {
+        for (const testModel of candidateModels.slice(0, 6)) {
           const url = `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${encodeURIComponent(item.key)}`;
           const res = await fetch(url, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": item.key
+            },
             body: JSON.stringify({
               contents: [{ parts: [{ text: "OK" }] }],
               generationConfig: { maxOutputTokens: 8 }
@@ -2368,16 +2381,15 @@ const firebaseConfig = {
               if (j?.error?.message) msg = `HTTP ${res.status}: ${j.error.message}`;
             } catch (_) {}
             lastErrText = msg;
-            // If 404 on this model, continue loop to next discovered model
-            if (res.status !== 404) break;
+            // Jika 404 (model belum tersedia di region/key ini), lanjut coba model berikutnya
+            if (res.status !== 404 && res.status !== 400) break;
           }
         }
 
         if (!workingModel) {
-          throw new Error(lastErrText || "Model tidak ditemukan");
+          throw new Error(lastErrText || "Model tidak merespons");
         }
 
-        // Update selected model if previous one was 404
         stateSchoolSettings.selectedModel = workingModel;
         const genModelSelect = document.getElementById("gen-model");
         if (genModelSelect && Array.from(genModelSelect.options).some(o => o.value === workingModel)) {
@@ -2388,13 +2400,13 @@ const firebaseConfig = {
         item.lastUsed = `Terhubung OK • Model: ${workingModel} (${new Date().toLocaleTimeString("id-ID")})`;
         await persistSettingsToFirestore();
         refreshAllViews();
-        showToast(`${item.label} AKTIF & terhubung menggunakan model ${workingModel}!`, "success");
+        showToast(`${item.label} AKTIF & berhasil terhubung dengan model ${workingModel}!`, "success");
       } catch (err) {
         item.status = "limit";
-        item.lastUsed = `Gagal: ${err.message.substring(0, 90)}`;
+        item.lastUsed = `Gagal: ${err.message.substring(0, 95)}`;
         await persistSettingsToFirestore();
         refreshAllViews();
-        showToast(`${item.label} gagal diuji: ${err.message}`, "error");
+        showToast(`${item.label}: ${err.message}`, "error");
       }
     };
 
@@ -2690,31 +2702,35 @@ const firebaseConfig = {
           const keyObj = realKeys[keyIndex];
           keyObj.key = sanitizeApiKey(keyObj.key);
 
-          if (!keyObj.key.startsWith("AIza")) {
-            keyObj.status = "limit";
-            keyObj.lastUsed = "Format bukan AIzaSy... (Cek Google AI Studio)";
-            appendGenLog(`Melewati ${keyObj.label}: Format key (${maskApiKey(keyObj.key)}) bukan AIzaSy...`, "text-amber-400");
-            continue;
-          }
-
-          // Discover models supported by this key or use safe fallback list
-          let modelsToTry = [cleanSelected, "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-1.5-flash"];
+          // Discover models supported by this key (supports both `AQ.Ab8RN...` and `AIzaSy...`)
+          let modelsToTry = [
+            cleanSelected,
+            "gemini-2.5-flash",
+            "gemini-flash-latest",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash-lite"
+          ];
           try {
             const discovered = await discoverAvailableGeminiModels(keyObj.key);
             modelsToTry = [
-              ...(discovered.includes(cleanSelected) ? [cleanSelected] : []),
-              ...discovered
+              cleanSelected,
+              ...discovered,
+              "gemini-2.5-flash",
+              "gemini-flash-latest"
             ];
           } catch (_) {}
-          modelsToTry = modelsToTry.filter((v, i, a) => a.indexOf(v) === i);
+          modelsToTry = modelsToTry.filter((v, i, a) => v && a.indexOf(v) === i);
 
-          for (const modelName of modelsToTry.slice(0, 4)) {
+          for (const modelName of modelsToTry.slice(0, 5)) {
             appendGenLog(`Mencoba ${keyObj.label} (${maskApiKey(keyObj.key)}) dengan model ${modelName}...`, "text-blue-300");
             try {
               const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(keyObj.key)}`;
               const response = await fetch(endpoint, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": keyObj.key
+                },
                 body: JSON.stringify({
                   contents: [{ parts: [{ text: promptText }] }],
                   generationConfig: {
@@ -2763,7 +2779,7 @@ const firebaseConfig = {
       }
 
       // If in Preview Mode or no real key entered yet
-      appendGenLog("Menggunakan Engine Penyusun Soal Cerdas Internal (Masukkan API Key 'AIzaSy...' dari Google AI Studio untuk koneksi Gemini real-time).", "text-amber-300");
+      appendGenLog("Menggunakan Engine Penyusun Soal Cerdas Internal (Masukkan API Key 'AQ.Ab8RN...' atau 'AIzaSy...' dari Google AI Studio untuk koneksi Gemini real-time).", "text-amber-300");
       await new Promise(r => setTimeout(r, 800));
       return null;
     }
@@ -5368,6 +5384,15 @@ function bangunFormDariJSON(paket) {
 
     // Initialize Dual-Mode Banners on Load
     (function initDualModeUI() {
+      // Otomatis bersihkan status error lama pada key berformat AQ.Ab8RN... saat aplikasi dimuat
+      if (Array.isArray(stateApiKeys)) {
+        stateApiKeys.forEach(k => {
+          if (k.key && String(k.key).trim().startsWith("AQ.") && String(k.lastUsed || "").includes("AIzaSy")) {
+            k.status = "ready";
+            k.lastUsed = "Siap Digunakan (Format AQ. Valid)";
+          }
+        });
+      }
       if (IS_PREVIEW === true) {
         document.getElementById("login-preview-banner").classList.remove("hidden");
         document.getElementById("demo-quick-fill").classList.remove("hidden");
