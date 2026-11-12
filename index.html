@@ -799,6 +799,15 @@
                       <option value="1">1 Stimulus Khusus per 1 Soal</option>
                     </select>
                   </div>
+                  <div class="md:col-span-2">
+                    <label class="block text-[11px] font-bold text-slate-800 mb-1">Panjang &amp; Kedalaman Teks Bacaan / Wacana Stimulus:</label>
+                    <select id="gen-stimulus-length" class="w-full px-3 py-2 rounded-xl border border-amber-300 bg-white text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                      <option value="LONG" selected>Panjang &amp; Mendalam — 3 s.d. 4 Paragraf Utuh (±160–250 Kata per Stimulus, Standar Literasi AKM)</option>
+                      <option value="MEDIUM">Sedang / Standar — 2 Paragraf (±90–140 Kata per Stimulus)</option>
+                      <option value="VARIED">Bervariasi Otomatis — Kombinasi Teks Pendek (LOTS) &amp; Wacana Panjang Mendalam (MOTS/HOTS)</option>
+                      <option value="SHORT">Ringkas &amp; Padat — 1 Paragraf Pendek (±40–65 Kata per Stimulus, Cocok Fase A / Kelas Rendah)</option>
+                    </select>
+                  </div>
                 </div>
 
                 <!-- Pilihan Jenis Stimulus Multimodal -->
@@ -2735,175 +2744,127 @@ const firebaseConfig = {
         }
       });
       renderExamEditorDocument();
-      showToast(`Bentuk stimulus grup ${groupId} diubah ke ${STIMULUS_TYPE_META[newType]?.label || newType}`, "info");
+      showToast(`Bentuk stimulus grup ${groupId} diubah menjadi ${STIMULUS_TYPE_META[newType]?.label || newType}`, "info");
     };
 
     window.fillSamplePrompt = function() {
       document.getElementById("gen-title").value = "Sumatif Akhir Semester (SAS)";
       document.getElementById("gen-grade").value = "Fase B - SD/MI Kelas 4";
       document.getElementById("gen-subject").value = "IPAS (Ilmu Pengetahuan Alam dan Sosial)";
-      document.getElementById("gen-topic").value = "Bagian Tubuh Tumbuhan dan Fungsinya, Proses Fotosintesis, Wujud Zat dan Perubahannya, serta Gaya dan Gerak dalam Kehidupan Sehari-hari.";
-      document.getElementById("qty-pg").value = "10";
-      document.getElementById("qty-pgk").value = "5";
-      document.getElementById("qty-match").value = "3";
-      document.getElementById("qty-short").value = "1";
-      document.getElementById("qty-essay").value = "1";
+      document.getElementById("gen-topic").value =
+        "Capaian Pembelajaran (CP): Peserta didik memahami bentuk dan fungsi pancaindra, siklus hidup makhluk hidup, wujud zat dan perubahannya, serta perubahan bentuk energi dalam kehidupan sehari-hari. Tujuan Pembelajaran (TP): Peserta didik mampu menganalisis perubahan wujud benda, mengidentifikasi hubungan antarmakhluk hidup dalam ekosistem, dan menerapkan pelestarian sumber daya alam di lingkungan sekitar.";
+      document.getElementById("qty-pg").value = 10;
+      document.getElementById("qty-pgk").value = 5;
+      document.getElementById("qty-match").value = 3;
+      document.getElementById("qty-short").value = 1;
+      document.getElementById("qty-essay").value = 1;
+      window.setCognitivePreset(20, 50, 30);
       window.updateTotalQuota();
-      showToast("Contoh parameter topik Fase B (Kelas 4) berhasil dimuat!", "info");
+      showToast("Contoh topik Fase B (Kelas 4) lengkap dengan CP & TP berhasil dimuat!", "info");
     };
 
-    // Helper: Extract JSON cleanly even if wrapped in markdown ```json ... ```
-    function parseCleanJsonFromAi(rawText) {
-      if (!rawText) throw new Error("Respons AI kosong.");
-      const cleaned = String(rawText)
-        .trim()
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```$/i, "")
-        .trim();
-      return JSON.parse(cleaned);
-    }
-
-    // Call Gemini API with Multi-Key Rotation, Argon / Gemini 3.1 Support (generateContent + Interactions API fallback)
-    async function callGeminiWithMultiKeyFailover(promptText, selectedModel) {
+    // Core Function: Call Gemini API with Multi-Key Rotation / Failover (Supports Argon / Gemini 3.1 / 3.0 / 2.5)
+    async function callGeminiWithMultiKeyFailover(promptText, modelName) {
       const realKeys = stateApiKeys.filter(k => k.key && !k.key.startsWith("AIzaSyDEMO"));
 
-      if (realKeys.length > 0) {
-        const cleanSelected = (selectedModel === "gemini-2.0-flash" || !selectedModel)
-          ? "gemini-3.1-pro-preview"
-          : selectedModel;
-
-        for (let attempt = 0; attempt < realKeys.length; attempt++) {
-          const keyIndex = (currentKeyPointer + attempt) % realKeys.length;
-          const keyObj = realKeys[keyIndex];
-          keyObj.key = sanitizeApiKey(keyObj.key);
-
-          // Discover models supported by this key (Prioritizing Argon / Gemini 3.1 Pro / 3.0 Pro / 3.0 Flash)
-          let modelsToTry = [
-            cleanSelected,
-            "gemini-3.1-pro-preview",
-            "gemini-3-pro-preview",
-            "gemini-3-flash-preview",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash"
-          ];
-          try {
-            const discovered = await discoverAvailableGeminiModels(keyObj.key);
-            modelsToTry = [
-              cleanSelected,
-              ...discovered,
-              "gemini-3.1-pro-preview",
-              "gemini-3-pro-preview",
-              "gemini-3-flash-preview",
-              "gemini-2.5-pro",
-              "gemini-2.5-flash"
-            ];
-          } catch (_) {}
-          modelsToTry = modelsToTry.filter((v, i, a) => v && a.indexOf(v) === i);
-
-          for (const modelName of modelsToTry.slice(0, 6)) {
-            appendGenLog(`Mencoba ${keyObj.label} (${maskApiKey(keyObj.key)}) dengan model ${modelName}...`, "text-blue-300");
-            try {
-              const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(keyObj.key)}`;
-              const response = await fetch(endpoint, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "x-goog-api-key": keyObj.key
-                },
-                body: JSON.stringify({
-                  contents: [{ role: "user", parts: [{ text: promptText }] }],
-                  generationConfig: {
-                    temperature: 0.65,
-                    responseMimeType: "application/json"
-                  }
-                })
-              });
-
-              if (!response.ok) {
-                let errMsg = `HTTP ${response.status}`;
-                try {
-                  const errJson = await response.json();
-                  if (errJson?.error?.message) errMsg = `HTTP ${response.status}: ${errJson.error.message}`;
-                } catch (_) {}
-
-                // Jika model Argon / Gemini 3 pada akun mengarahkan ke Interactions API (seperti di log Anda), coba endpoint v1beta/interactions otomatis!
-                if (errMsg.includes("Interactions API")) {
-                  appendGenLog(`Model ${modelName} menggunakan Interactions API baru, mengalihkan protokol secara otomatis...`, "text-violet-300");
-                  const interUrl = `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(keyObj.key)}`;
-                  const interRes = await fetch(interUrl, {
-                    method: "POST",
-                    headers: {
-                      "Content-Type": "application/json",
-                      "x-goog-api-key": keyObj.key
-                    },
-                    body: JSON.stringify({
-                      model: `models/${modelName.replace(/^models\//, "")}`,
-                      input: promptText
-                    })
-                  });
-                  if (interRes.ok) {
-                    const interData = await interRes.json();
-                    const interText =
-                      interData?.outputs?.[0]?.text ||
-                      interData?.outputs?.[0]?.content?.parts?.[0]?.text ||
-                      interData?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (interText) {
-                      const parsedInter = parseCleanJsonFromAi(interText);
-                      keyObj.status = "active";
-                      keyObj.lastUsed = `Sukses • ${modelName} [Interactions API] (${new Date().toLocaleTimeString("id-ID")})`;
-                      stateSchoolSettings.selectedModel = modelName;
-                      currentKeyPointer = (keyIndex + 1) % realKeys.length;
-                      await persistSettingsToFirestore();
-                      renderGeneratorApiKeys();
-                      appendGenLog(`Berhasil generate soal menggunakan ${keyObj.label} (${modelName} - Interactions API)!`, "text-emerald-400");
-                      return parsedInter;
-                    }
-                  }
-                }
-
-                throw new Error(errMsg);
-              }
-
-              const result = await response.json();
-              const parts = result?.candidates?.[0]?.content?.parts || [];
-              // Ambil part teks utama (lewati part thought jika model thinking aktif)
-              const textPart = parts.find(p => p.text && !p.thought) || parts.find(p => p.text);
-              const rawText = textPart?.text;
-              if (!rawText) throw new Error("Respons AI kosong.");
-
-              const parsed = parseCleanJsonFromAi(rawText);
-              keyObj.status = "active";
-              keyObj.lastUsed = `Sukses • ${modelName} (${new Date().toLocaleTimeString("id-ID")})`;
-              stateSchoolSettings.selectedModel = modelName;
-              currentKeyPointer = (keyIndex + 1) % realKeys.length;
-              await persistSettingsToFirestore();
-              renderGeneratorApiKeys();
-              appendGenLog(`Berhasil generate soal menggunakan ${keyObj.label} (${modelName})!`, "text-emerald-400");
-              return parsed;
-            } catch (err) {
-              keyObj.status = "limit";
-              keyObj.lastUsed = `Failover: ${err.message.substring(0, 65)}`;
-              appendGenLog(`Peringatan pada ${keyObj.label} (${modelName}): ${err.message}. Mencoba alternatif...`, "text-amber-400");
-            }
-          }
-        }
-
-        // Graceful fallback so question generation STILL SUCCEEDS even if all external keys hit quota/error
-        await persistSettingsToFirestore();
-        refreshAllViews();
-        appendGenLog("Seluruh API Key eksternal sedang limit/bermasalah. Mengaktifkan Engine Penyusun Soal Cerdas Internal agar paket soal tetap selesai dibuat!", "text-amber-300 font-bold");
-        showToast("API Key eksternal gagal/limit. Soal tetap berhasil disusun menggunakan Engine Internal!", "warning");
+      if (realKeys.length === 0) {
+        appendGenLog("Menggunakan Engine AI Terstruktur Internal (Tambahkan API Key 'AQ.Ab8RN...' / 'AIzaSy...' untuk koneksi Gemini Cloud).", "text-amber-300");
+        await new Promise(r => setTimeout(r, 650));
         return null;
       }
 
-      // If in Preview Mode or no real key entered yet
-      appendGenLog("Menggunakan Engine Penyusun Soal Cerdas Internal (Masukkan API Key 'AQ.Ab8RN...' atau 'AIzaSy...' dari Google AI Studio untuk koneksi Gemini real-time).", "text-amber-300");
-      await new Promise(r => setTimeout(r, 800));
+      const requestedModel = (modelName && modelName !== "gemini-2.0-flash") ? modelName : "gemini-3.1-pro-preview";
+      let lastError = null;
+
+      for (let attempt = 0; attempt < realKeys.length; attempt++) {
+        const keyIndex = (currentKeyPointer + attempt) % realKeys.length;
+        const keyObj = realKeys[keyIndex];
+        keyObj.key = sanitizeApiKey(keyObj.key);
+
+        const discovered = await discoverAvailableGeminiModels(keyObj.key);
+        const fallbackModels = [
+          requestedModel,
+          ...discovered,
+          "gemini-3.1-pro-preview",
+          "gemini-3-pro-preview",
+          "gemini-3-flash-preview",
+          "gemini-2.5-pro",
+          "gemini-2.5-flash"
+        ].filter((v, i, a) => v && a.indexOf(v) === i);
+
+        for (const activeModel of fallbackModels.slice(0, 6)) {
+          appendGenLog(`Mencoba ${keyObj.label} (${maskApiKey(keyObj.key)}) dengan model ${activeModel}...`, "text-blue-300");
+
+          try {
+            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${encodeURIComponent(keyObj.key)}`;
+            const isThinkingModel = activeModel.includes("3.1") || activeModel.includes("3-") || activeModel.includes("pro") || activeModel.includes("argon") || activeModel.includes("exp");
+
+            const res = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": keyObj.key
+              },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }],
+                generationConfig: {
+                  temperature: isThinkingModel ? 0.65 : 0.45,
+                  responseMimeType: "application/json"
+                }
+              })
+            });
+
+            if (!res.ok) {
+              let errDetail = `HTTP ${res.status}`;
+              try {
+                const errJson = await res.json();
+                if (errJson?.error?.message) errDetail = `HTTP ${res.status}: ${errJson.error.message}`;
+              } catch (_) {}
+
+              if (res.status === 404 || res.status === 400 || errDetail.includes("Interactions API")) {
+                appendGenLog(`Model ${activeModel} tidak tersedia pada endpoint ini (${errDetail.substring(0, 80)}). Mencoba model berikutnya...`, "text-amber-300");
+                lastError = new Error(errDetail);
+                continue;
+              }
+              throw new Error(errDetail);
+            }
+
+            const data = await res.json();
+            const parts = data?.candidates?.[0]?.content?.parts || [];
+            const rawText = parts.map(p => p.text || "").join("\n");
+            if (!rawText) throw new Error("Respons AI kosong.");
+
+            let cleanedJson = rawText.trim().replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+            const firstBrace = cleanedJson.indexOf("{");
+            const lastBrace = cleanedJson.lastIndexOf("}");
+            if (firstBrace !== -1 && lastBrace > firstBrace) {
+              cleanedJson = cleanedJson.substring(firstBrace, lastBrace + 1);
+            }
+            const parsed = JSON.parse(cleanedJson);
+
+            keyObj.status = "active";
+            keyObj.lastUsed = `Sukses • ${activeModel} (${new Date().toLocaleTimeString("id-ID")})`;
+            currentKeyPointer = (keyIndex + 1) % realKeys.length;
+            await persistSettingsToFirestore();
+            renderGeneratorApiKeys();
+            appendGenLog(`Sukses menghasilkan soal dengan ${keyObj.label} (Model: ${activeModel})!`, "text-emerald-400 font-bold");
+            return parsed;
+          } catch (err) {
+            lastError = err;
+            keyObj.status = "limit";
+            keyObj.lastUsed = `Failover: ${err.message.substring(0, 80)}`;
+            appendGenLog(`Peringatan pada ${keyObj.label}: ${err.message}. Beralih ke cadangan berikutnya...`, "text-amber-400");
+            renderGeneratorApiKeys();
+            break;
+          }
+        }
+      }
+
+      appendGenLog(`Seluruh API Key eksternal sedang sibuk (${lastError?.message || "Limit"}). Menggunakan Engine Penyusun Soal Cerdas Internal agar proses tetap berhasil 100%...`, "text-amber-300 font-bold");
       return null;
     }
 
-    // Helper: Interleave / Mix Question Types so each Stimulus Group (max 3 items) gets varied objective types,
-    // while keeping ISIAN (Isian Singkat) and URAIAN (Esai) strictly at the very end in sequential order!
+    // Helper: Build Mixed Question Type Sequence so PG/PGK/MENJODOHKAN are varied per stimulus while ISIAN & URAIAN stay ordered at the end
     function buildMixedTypeSequence(quotas, orderMode = "mixed") {
       const counts = {
         PG: Number(quotas.pg) || 0,
@@ -2912,6 +2873,7 @@ const firebaseConfig = {
         ISIAN: Number(quotas.short) || 0,
         URAIAN: Number(quotas.essay) || 0
       };
+      const objectiveTotal = counts.PG + counts.PGK + counts.MENJODOHKAN;
 
       if (orderMode === "grouped") {
         const seq = [];
@@ -2921,66 +2883,63 @@ const firebaseConfig = {
         return seq;
       }
 
-      // Mix ONLY objective questions (PG, PGK, MENJODOHKAN) across stimulus chunks
-      const objectiveResult = [];
-      const objectiveKeys = ["PG", "PGK", "MENJODOHKAN"];
-      const objectiveTotal = counts.PG + counts.PGK + counts.MENJODOHKAN;
-      let lastType = null;
+      const objectiveTypes = ["PG", "PGK", "MENJODOHKAN"];
+      const remainingObj = { PG: counts.PG, PGK: counts.PGK, MENJODOHKAN: counts.MENJODOHKAN };
+      const sequence = [];
 
-      for (let step = 0; step < objectiveTotal; step++) {
-        const available = objectiveKeys.filter(k => counts[k] > 0);
-        if (available.length === 0) break;
+      while (sequence.length < objectiveTotal) {
+        const sortedTypes = objectiveTypes
+          .filter(t => remainingObj[t] > 0)
+          .sort((a, b) => remainingObj[b] - remainingObj[a]);
 
-        available.sort((a, b) => counts[b] - counts[a]);
-        let chosen = available[0];
+        if (sortedTypes.length === 0) break;
 
-        // Vary the question type inside each 3-question stimulus group
-        if (available.length > 1 && chosen === lastType && (step % 3 !== 0)) {
-          chosen = available[1];
+        for (let i = 0; i < sortedTypes.length; i++) {
+          const t = sortedTypes[i];
+          if (remainingObj[t] > 0) {
+            sequence.push(t);
+            remainingObj[t]--;
+          }
         }
-
-        objectiveResult.push(chosen);
-        counts[chosen]--;
-        lastType = chosen;
       }
 
-      // Always place ISIAN (Isian Singkat) followed by URAIAN (Uraian/Esai) sequentially at the very end
-      const tailResult = [];
-      for (let i = 0; i < counts.ISIAN; i++) tailResult.push("ISIAN");
-      for (let i = 0; i < counts.URAIAN; i++) tailResult.push("URAIAN");
+      for (let i = 0; i < counts.ISIAN; i++) sequence.push("ISIAN");
+      for (let i = 0; i < counts.URAIAN; i++) sequence.push("URAIAN");
 
-      return [...objectiveResult, ...tailResult];
+      return sequence;
     }
 
-    // Metadata Label & Visual Generator for Multimodal Stimulus Formats (Non-Fiksi, Cerita Anak/Fiksi, Fabel, Visual, dll.)
+    // Metadata Label & Visual Generator untuk 15 Jenis Stimulus Multimodal
     const STIMULUS_TYPE_META = {
       TEKS_BACAAN: { label: "Teks Bacaan Non-Fiksi", icon: "fa-book-open" },
       CERITA_ANAK_FIKSI: { label: "Cerita Anak / Fiksi", icon: "fa-child-reaching" },
       CERITA_FABEL: { label: "Cerita Fabel / Dongeng", icon: "fa-paw" },
-      GAMBAR_VISUAL: { label: "Gambar / Ilustrasi Visual", icon: "fa-image" },
-      INFOGRAFIS: { label: "Infografis Edukasi", icon: "fa-chart-pie" },
-      POSTER: { label: "Poster / Kampanye Edukasi", icon: "fa-bullhorn" },
-      GRAFIK_DIAGRAM: { label: "Grafik & Diagram Data", icon: "fa-chart-column" },
+      GAMBAR_VISUAL: { label: "Gambar / Foto Ilustrasi", icon: "fa-image" },
+      INFOGRAFIS: { label: "Infografis Visual", icon: "fa-chart-pie" },
+      POSTER: { label: "Poster / Slogan Edukasi", icon: "fa-bullhorn" },
+      GRAFIK_DIAGRAM: { label: "Grafik / Diagram Data", icon: "fa-chart-column" },
       TABEL_DATA: { label: "Tabel Data Pengamatan", icon: "fa-table" },
       FENOMENA_ALAM: { label: "Ilustrasi Peristiwa / Fenomena Alam", icon: "fa-cloud-sun-rain" },
-      PERCAKAPAN: { label: "Teks Percakapan / Wawancara", icon: "fa-comments" },
+      PERCAKAPAN: { label: "Percakapan / Wawancara", icon: "fa-comments" },
       PETA_DENAH: { label: "Peta / Denah Lokasi", icon: "fa-map-location-dot" },
       JADWAL: { label: "Jadwal / Agenda Kegiatan", icon: "fa-calendar-check" },
-      KASUS_KONTEKSTUAL: { label: "Studi Kasus Kontekstual", icon: "fa-magnifying-glass-chart" },
+      KASUS_KONTEKSTUAL: { label: "Kasus Kontekstual", icon: "fa-magnifying-glass-chart" },
       PENGAMATAN_SIMULASI: { label: "Hasil Pengamatan & Simulasi", icon: "fa-flask-vial" },
-      VIDEO_AUDIO: { label: "Transkrip Video / Audio Kontekstual", icon: "fa-circle-play" }
+      VIDEO_AUDIO: { label: "Transkrip Video / Audio", icon: "fa-circle-play" }
     };
 
-    function renderMultimodalStimulusVisual(stimType, title, subtopic, text, customImage = "") {
+    // Render Visual Multimodal Stimulus (Gambar SVG, Infografis, Tabel, Grafik, Peta, Percakapan, Jadwal, dll.)
+    function renderMultimodalStimulusVisual(type, title, subtopic, text, customImage) {
+      const stimType = (type || "TEKS_BACAAN").toUpperCase();
       const safeTitle = escapeHtml(title || subtopic || "Stimulus Pembelajaran");
-      const safeSub = escapeHtml(subtopic || title || "Konsep Utama");
+      const safesub = escapeHtml(subtopic || title || "Konsep Utama");
 
       if (customImage) {
         return `
           <div style="margin: 10px 0; text-align: center;">
-            <img src="${customImage}" alt="${safeTitle}" style="max-height: 230px; max-width: 100%; border-radius: 8px; border: 1px solid #cbd5e1; margin: 0 auto; display: inline-block;" />
+            <img src="${customImage}" alt="${safeTitle}" style="max-height: 250px; max-width: 100%; border-radius: 8px; border: 1px solid #cbd5e1; margin: 0 auto; display: inline-block;" />
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
@@ -3000,7 +2959,7 @@ const firebaseConfig = {
               <polygon points="246,114 256,119 246,124" fill="#0284C7" />
               <rect x="260" y="90" width="150" height="54" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="2" />
               <text x="335" y="113" text-anchor="middle" font-size="11" font-family="Arial" font-weight="bold" fill="#1E3A8A">PROSES &amp; INTERAKSI</text>
-              <text x="335" y="130" text-anchor="middle" font-size="9.5" font-family="Arial" fill="#1E40AF">${safeSub.substring(0, 22)}</text>
+              <text x="335" y="130" text-anchor="middle" font-size="9.5" font-family="Arial" fill="#1E40AF">${safesub.substring(0, 22)}</text>
               <path d="M416 119 L454 119" stroke="#059669" stroke-width="3" />
               <polygon points="452,114 462,119 452,124" fill="#059669" />
               <rect x="466" y="95" width="115" height="48" rx="6" fill="#ECFDF5" stroke="#059669" stroke-width="2" />
@@ -3010,7 +2969,7 @@ const firebaseConfig = {
             </svg>
             <div style="font-size: 9pt; color: #475569; font-style: italic; margin-top: 4px;">Gambar Ilustrasi Skema &amp; Fenomena: ${safeTitle}</div>
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
@@ -3042,13 +3001,13 @@ const firebaseConfig = {
               <text x="437" y="172" text-anchor="middle" font-size="10" font-family="Arial" fill="#1E293B">Kelompok IV</text>
             </svg>
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
       if (stimType === "TABEL_DATA") {
         return `
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55; margin-bottom: 8px;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6; margin-bottom: 8px;">${formatStimulusParagraphsHtml(text)}</div>
           <table style="width: 100%; border-collapse: collapse; font-size: 9.5pt; background: #ffffff; margin-top: 6px;" border="1" cellpadding="5">
             <thead>
               <tr style="background-color: #FEF3C7; color: #78350F;">
@@ -3086,13 +3045,13 @@ const firebaseConfig = {
         return `
           <div style="background: #ffffff; border: 2px solid #F59E0B; border-radius: 10px; padding: 12px; margin-bottom: 8px;">
             <div style="background: #FEF3C7; color: #92400E; padding: 6px 10px; border-radius: 6px; font-weight: bold; text-align: center; font-size: 10.5pt; margin-bottom: 8px; text-transform: uppercase;">
-              ${stimType === "POSTER" ? "POSTER EDUKASI &amp; AKSI NYATA" : "INFOGRAFIS RINGKASAN FAKTA"}: ${safeSub}
+              ${stimType === "POSTER" ? "POSTER EDUKASI &amp; AKSI NYATA" : "INFOGRAFIS RINGKASAN FAKTA"}: ${safesub}
             </div>
             <table style="width: 100%; border-collapse: collapse; font-size: 9.5pt;" border="0" cellpadding="6">
               <tr>
                 <td style="width: 33%; border: 1px solid #FDE68A; background: #FFFBEB; border-radius: 6px; vertical-align: top;">
                   <div style="font-weight: bold; color: #B45309;">1. FAKTA UTAMA</div>
-                  <div>Memahami konsep dasar ${safeSub} secara tepat dan terukur.</div>
+                  <div>Memahami konsep dasar ${safesub} secara tepat dan terukur.</div>
                 </td>
                 <td style="width: 33%; border: 1px solid #FDE68A; background: #EFF6FF; border-radius: 6px; vertical-align: top;">
                   <div style="font-weight: bold; color: #1D4ED8;">2. ANALISIS DATA</div>
@@ -3104,7 +3063,7 @@ const firebaseConfig = {
                 </td>
               </tr>
             </table>
-            <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55; margin-top: 8px;">${escapeHtml(text)}</div>
+            <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6; margin-top: 8px;">${formatStimulusParagraphsHtml(text)}</div>
           </div>
         `;
       }
@@ -3135,29 +3094,29 @@ const firebaseConfig = {
               <text x="464" y="53" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#334155">B</text>
             </svg>
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
       if (stimType === "PERCAKAPAN") {
         return `
           <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; font-size: 10pt;">
-            <div style="margin-bottom: 4px;"><b>Ibu Guru / Narasumber:</b> "Anak-anak, mari kita amati bagaimana <i>${safeSub}</i> bekerja di lingkungan sekitar kita."</div>
+            <div style="margin-bottom: 4px;"><b>Ibu Guru / Narasumber:</b> "Anak-anak, mari kita amati bagaimana <i>${safesub}</i> bekerja di lingkungan sekitar kita."</div>
             <div style="margin-bottom: 4px;"><b>Raka:</b> "Saya mencatat bahwa ketika komponen utama dijaga dengan baik, hasilnya menjadi jauh lebih seimbang, Bu."</div>
             <div><b>Siti:</b> "Betul! Dari hasil wawancara dan pengamatan kita, kerja sama warga juga sangat menentukan keberhasilan program tersebut."</div>
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
       if (stimType === "JADWAL") {
         return `
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55; margin-bottom: 8px;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6; margin-bottom: 8px;">${formatStimulusParagraphsHtml(text)}</div>
           <table style="width: 100%; border-collapse: collapse; font-size: 9.5pt; background: #ffffff;" border="1" cellpadding="5">
             <thead>
               <tr style="background-color: #E0F2FE; color: #0C4A6E;">
                 <th style="border: 1px solid #94A3B8; width: 22%;">Waktu / Tahap</th>
-                <th style="border: 1px solid #94A3B8; width: 43%;">Agenda Kegiatan (${safeSub})</th>
+                <th style="border: 1px solid #94A3B8; width: 43%;">Agenda Kegiatan (${safesub})</th>
                 <th style="border: 1px solid #94A3B8; width: 35%;">Target Capaian</th>
               </tr>
             </thead>
@@ -3190,10 +3149,10 @@ const firebaseConfig = {
               <span style="font-family: monospace; color: #94A3B8;">Durasi: 02:45</span>
             </div>
             <div style="font-style: italic; color: #E2E8F0;">
-              "[Narator]: Perhatikan perubahan yang tampak pada tayangan berikut mengenai ${safeSub}. Terlihat jelas bagaimana interaksi antarbagian saling memengaruhi keseimbangan secara menyeluruh..."
+              "[Narator]: Perhatikan perubahan yang tampak pada tayangan berikut mengenai ${safesub}. Terlihat jelas bagaimana interaksi antarbagian saling memengaruhi keseimbangan secara menyeluruh..."
             </div>
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.55;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
@@ -3202,7 +3161,7 @@ const firebaseConfig = {
           <div style="background: #FFFBEB; border-left: 4px solid #B45309; padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; font-size: 9.5pt; color: #78350F; font-style: italic;">
             <i class="fa-solid fa-paw"></i> <b>Kisah Fabel Nusantara</b> — Bacalah cerita tokoh hewan berikut dan kaitkan dengan konsep pembelajaran!
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.65;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
@@ -3211,17 +3170,75 @@ const firebaseConfig = {
           <div style="background: #EFF6FF; border-left: 4px solid #2563EB; padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; font-size: 9.5pt; color: #1E3A8A; font-style: italic;">
             <i class="fa-solid fa-book-open-reader"></i> <b>Cerita Anak &amp; Pengalaman Sehari-hari</b> — Simaklah kisah berikut dengan saksama!
           </div>
-          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${escapeHtml(text)}</div>
+          <div style="font-size: 10.5pt; text-align: justify; line-height: 1.65;">${formatStimulusParagraphsHtml(text)}</div>
         `;
       }
 
       // Default: TEKS_BACAAN (Non-Fiksi), KASUS_KONTEKSTUAL, PENGAMATAN_SIMULASI
-      return `<div style="font-size: 10.5pt; text-align: justify; line-height: 1.55;">${escapeHtml(text)}</div>`;
+      return `<div style="font-size: 10.5pt; text-align: justify; line-height: 1.6;">${formatStimulusParagraphsHtml(text)}</div>`;
+    }
+
+    // Format multi-paragraph stimulus text cleanly with paragraph spacing & indentation
+    function formatStimulusParagraphsHtml(rawText) {
+      if (!rawText) return "";
+      const paragraphs = String(rawText)
+        .split(/\n\s*\n|\n/)
+        .map(p => p.trim())
+        .filter(Boolean);
+      if (paragraphs.length <= 1) {
+        return `<p style="margin: 0;">${escapeHtml(rawText)}</p>`;
+      }
+      return paragraphs
+        .map((p, idx) => `<p style="margin: 0 0 ${idx < paragraphs.length - 1 ? '8px' : '0'} 0; text-indent: 18px;">${escapeHtml(p)}</p>`)
+        .join("");
+    }
+
+    // Helper: Build Stimulus Narrative with Configurable Length (SHORT = 1 Paragraf, MEDIUM = 2 Paragraf, LONG = 3-4 Paragraf)
+    function buildStimulusTextByLength(sub, chosenStimType, lengthMode, isEarlyGrade, groupIndex = 0) {
+      const effectiveMode = lengthMode === "VARIED"
+        ? (groupIndex % 3 === 0 ? "SHORT" : groupIndex % 3 === 1 ? "MEDIUM" : "LONG")
+        : (lengthMode || "LONG");
+
+      // Paragraf 1 (Inti / Pembuka)
+      let p1 = "";
+      let p2 = "";
+      let p3 = "";
+      let p4 = "";
+
+      if (chosenStimType === "CERITA_FABEL") {
+        p1 = isEarlyGrade
+          ? `Di Hutan Rimba Hijau yang sejuk, hiduplah Kiki si Kelinci Putih dan Boni si Tupai Cokelat yang gemar merawat tanaman di tepi sungai. Suatu pagi yang cerah, mereka memperhatikan perubahan menarik yang berkaitan dengan "${sub}" di sekitar tempat tinggal mereka.`
+          : `Di Lembah Lembayung yang subur, Pipit si Burung Kecil, Rusa Tanduk Emas, dan Katak Hijau hidup berdampingan dengan rukun. Setiap penghuni lembah memiliki peran masing-masing yang berkaitan erat dengan "${sub}" sehingga ketersediaan air jernih dan sumber makanan selalu tercukupi.`;
+        p2 = `Ketika musim kemarau mulai tiba, Boni melihat bahwa beberapa bagian di tepi telaga mengalami perubahan akibat kurangnya perhatian terhadap "${sub}". Kakek Kura-kura yang bijaksana pun mengumpulkan seluruh penghuni hutan di bawah pohon beringin besar untuk berdiskusi mencari penyebab dan solusinya.`;
+        p3 = `Menurut penjelasan Kakek Kura-kura, keseimbangan "${sub}" tidak terjadi secara kebetulan, melainkan karena adanya keteraturan antara komponen alam dan perilaku penghuninya. Apabila satu bagian terganggu, maka seluruh warga hutan akan merasakan dampaknya secara berantai.`;
+        p4 = `Sejak hari itu, Kiki, Boni, Pipit, dan teman-temannya membagi jadwal kerja bakti untuk merawat "${sub}" dengan penuh tanggung jawab. Tidak lama kemudian, Lembah Lembayung kembali rimbun, sejuk, dan memberikan manfaat berlimpah bagi seluruh makhluk hidup di dalamnya.`;
+      } else if (chosenStimType === "CERITA_ANAK_FIKSI") {
+        p1 = isEarlyGrade
+          ? `Sore itu setelah hujan reda, Damar dan adiknya, Kirana, membantu Ibu merapikan taman kecil di halaman rumah. Damar sangat antusias mengamati fenomena yang berkaitan dengan "${sub}" yang tampak jelas di sekitar tanaman bunga milik Ibu.`
+          : `Saat liburan akhir pekan di Desa Suka Makmur, Bagas, Nisa, dan Rafi diajak Kakek mengunjungi kebun terpadu serta aliran sungai bersih di pinggir desa. Di sepanjang perjalanan, Kakek menunjukkan contoh nyata mengenai "${sub}" yang selama ini dipelihara dengan baik oleh warga.`;
+        p2 = `Nisa mengeluarkan buku catatannya dan mulai menuliskan hasil pengamatannya secara terperinci. Ia menemukan bahwa cara kerja "${sub}" melibatkan beberapa tahapan penting yang saling mendukung satu sama lain agar menghasilkan manfaat yang optimal.`;
+        p3 = `Kakek kemudian menceritakan bahwa beberapa tahun lalu warga desa pernah menghadapi kendala ketika prinsip "${sub}" diabaikan. Namun, berkat kemauan belajar dan kerja sama antarwarga, mereka berhasil menerapkan langkah perbaikan yang tepat dan terukur.`;
+        p4 = `Sekembalinya dari rumah Kakek, Bagas, Nisa, dan Rafi bertekad membagikan pengalaman berharga tentang "${sub}" tersebut kepada teman-teman mereka. Mereka menyadari bahwa pengetahuan yang diterapkan dalam kebiasaan sehari-hari dapat membawa perubahan positif yang besar.`;
+      } else {
+        // Non-Fiksi / Artikel Ilmiah Populer / Studi Kasus
+        p1 = `Dalam kehidupan sehari-hari, keberadaan dan mekanisme "${sub}" memegang peranan yang sangat krusial bagi keteraturan sistem di sekitarnya. Setiap bagian di dalam "${sub}" memiliki fungsi spesifik yang bekerja secara berkesinambungan untuk mendukung proses utama secara menyeluruh.`;
+        p2 = `Berdasarkan hasil pengamatan dan pencatatan data di lapangan, keterkaitan antar-komponen pada "${sub}" dipengaruhi oleh berbagai faktor internal maupun faktor lingkungan luar. Ketika seluruh faktor pendukung berada dalam kondisi seimbang, kinerja "${sub}" dapat berlangsung dengan efisiensi yang tinggi.`;
+        p3 = `Sebaliknya, apabila salah satu komponen utama pada "${sub}" mengalami gangguan atau penurunan fungsi, maka proses secara keseluruhan akan ikut terhambat. Hal ini membuktikan adanya hubungan sebab-akibat yang erat antara pemeliharaan komponen dengan daya dukung sistem dalam jangka panjang.`;
+        p4 = `Oleh karena itu, pemahaman yang mendalam serta langkah pengelolaan yang tepat terhadap "${sub}" sangat diperlukan dalam berbagai situasi nyata. Penerapan kebiasaan positif, pemantauan berkala, dan pemecahan masalah berbasis data menjadi kunci utama agar manfaat "${sub}" dapat terus dirasakan secara berkelanjutan.`;
+      }
+
+      if (effectiveMode === "SHORT") {
+        return p1;
+      } else if (effectiveMode === "MEDIUM") {
+        return `${p1}\n\n${p2}`;
+      } else {
+        return `${p1}\n\n${p2}\n\n${p3}\n\n${p4}`;
+      }
     }
 
     // Helper: Generate Rich Contextual Stimulus Bank per Group (Max 3 Questions per Stimulus)
-    // Tanpa kata administratif "peserta didik Fase B - SD/MI Kelas..." atau nama mapel kaku, menggunakan Fabel, Cerita Anak Fiksi, dan Non-Fiksi!
-    function createContextualStimulusGroups(totalQuestions, maxPerStimulus, subject, grade, topic, selectedStimTypes = []) {
+    // Mendukung pilihan panjang bacaan (SHORT, MEDIUM, LONG, VARIED)
+    function createContextualStimulusGroups(totalQuestions, maxPerStimulus, subject, grade, topic, selectedStimTypes = [], stimulusLength = "LONG") {
       const groupSize = Math.max(1, Math.min(3, Number(maxPerStimulus) || 3));
       const numGroups = Math.ceil(totalQuestions / groupSize);
       const rawSubtopics = topic
@@ -3237,46 +3254,13 @@ const firebaseConfig = {
 
       const isEarlyGrade = grade.includes("Fase A") || grade.includes("Kelas 1") || grade.includes("Kelas 2");
 
-      // Beragam cerita fabel, cerita anak/fiksi, dan wacana non-fiksi ilmiah tanpa menyebutkan label "Fase/Kelas/Mata Pelajaran"
-      const narrativeBuilders = [
-        // 1. Cerita Fabel / Dongeng Hewan
-        (sub) => isEarlyGrade
-          ? `Di Hutan Rimba Hijau, hiduplah Kiki si Kelinci dan Boni si Tupai yang gemar merawat tanaman di tepi sungai. Suatu hari, mereka memperhatikan perubahan pada "${sub}" di sekitar sarang mereka. Kakek Kura-kura yang bijaksana menjelaskan bahwa jika semua penghuni hutan saling menjaga "${sub}" dan tidak merusak alam, makanan serta air bersih akan selalu tersedia untuk semua sahabat hutan.`
-          : `Di Lembah Lembayung yang subur, Pipit si Burung Kecil, Rusa, dan Katak Hijau hidup berdampingan dengan damai. Suatu musim, keseimbangan "${sub}" di lembah mulai terganggu karena berkurangnya pepohonan rindang di tepi telaga. Burung Hantu tua pun mengajak seluruh penghuni lembah bekerja sama memulihkan kondisi "${sub}" agar rantai kehidupan dan ketersediaan sumber makanan tetap terjaga sepanjang tahun.`,
-        // 2. Cerita Anak / Fiksi Kontekstual
-        (sub) => isEarlyGrade
-          ? `Sore itu setelah hujan reda, Damar dan adiknya, Kirana, membantu Ibu merapikan halaman rumah. Damar tertarik mengamati peristiwa yang berkaitan dengan "${sub}" di taman kecil mereka. Dengan penuh rasa ingin tahu, Kirana bertanya kepada Ayah mengapa hal tersebut bisa terjadi. Ayah tersenyum lalu menceritakan bagaimana keteraturan pada "${sub}" sangat bermanfaat bagi kehidupan sehari-hari.`
-          : `Saat liburan akhir pekan di rumah Kakek di Desa Suka Makmur, Bagas, Nisa, dan Rafi diajak menyusuri kebun serta sungai kecil di pinggir desa. Di perjalanan, Kakek menunjukkan contoh nyata mengenai "${sub}" yang selama ini menjaga kesuburan tanah dan kelestarian desa. Bagas mencatat di buku hariannya bahwa kebiasaan baik warga dalam merawat "${sub}" membuat lingkungan desa tetap asri dan nyaman.`,
-        // 3. Teks Non-Fiksi / Artikel Sains & Sosial Populer
-        (sub) => isEarlyGrade
-          ? `Tahukah kamu bagaimana "${sub}" bekerja di lingkungan sekitar kita? Setiap hari, alam menyediakan berbagai manfaat yang saling terhubung satu sama lain. Ketika kebersihan dan keseimbangan pada "${sub}" dijaga dengan baik oleh warga sekitar, udara menjadi segar, makhluk hidup tumbuh sehat, dan kegiatan sehari-hari dapat berjalan dengan lancar.`
-          : `Berdasarkan catatan pengamatan lingkungan di kawasan Lembah Hijau, keberadaan "${sub}" memegang peranan yang sangat penting bagi keberlangsungan hidup makhluk hidup di sekitarnya. Setiap komponen saling berinteraksi membentuk kesatuan yang teratur. Apabila salah satu bagian mengalami gangguan, maka keseimbangan pada "${sub}" akan ikut terpengaruh dan berdampak pada lingkungan yang lebih luas.`,
-        // 4. Kisah Inspiratif Warga / Studi Kasus Nyata
-        (sub) => isEarlyGrade
-          ? `Warga Kampung Melati memiliki kebiasaan bergotong royong setiap hari Minggu pagi. Anak-anak seperti Dina dan Edo ikut bersemangat menerapkan cara menjaga "${sub}" di sekitar taman bermain. Berkat kepedulian bersama, lingkungan Kampung Melati menjadi bersih, tertib, dan menyenangkan untuk tempat bermain maupun belajar.`
-          : `Pak Rahmat bersama kelompok pemuda Karang Taruna di Desa Harapan Jaya mengembangkan program percontohan yang berkaitan dengan "${sub}". Sebelum program dimulai, mereka mengamati kondisi awal lingkungan dan mencatat faktor-faktor penyebab masalah. Setelah menerapkan pengelolaan "${sub}" secara terpadu selama tiga bulan, kualitas lingkungan meningkat pesat dan memberi manfaat langsung bagi warga desa.`,
-        // 5. Petualangan Fiksi / Eksplorasi Alam
-        (sub) => `Dalam perjalanan kemah bakti di kaki Gunung Merapi, regu Elang yang dipimpin oleh Fajar menemukan fenomena menarik terkait "${sub}". Mereka mengamati dengan saksama bagaimana kondisi udara, air, serta makhluk hidup di kawasan tersebut saling memengaruhi. Dari pengalaman langsung tersebut, Fajar dan teman-temannya menyadari bahwa menjaga kelestarian "${sub}" adalah tanggung jawab bersama.`
-      ];
-
       const groups = [];
       for (let g = 0; g < numGroups; g++) {
         const sub = rawSubtopics[g % rawSubtopics.length];
         const chosenStimType = activeStimTypes[g % activeStimTypes.length];
         const stimMeta = STIMULUS_TYPE_META[chosenStimType] || STIMULUS_TYPE_META.TEKS_BACAAN;
 
-        let bodyText = "";
-        if (chosenStimType === "CERITA_FABEL") {
-          bodyText = narrativeBuilders[0](sub);
-        } else if (chosenStimType === "CERITA_ANAK_FIKSI") {
-          bodyText = narrativeBuilders[1](sub);
-        } else if (chosenStimType === "TEKS_BACAAN") {
-          bodyText = narrativeBuilders[2](sub);
-        } else if (chosenStimType === "KASUS_KONTEKSTUAL") {
-          bodyText = narrativeBuilders[3](sub);
-        } else {
-          bodyText = narrativeBuilders[g % narrativeBuilders.length](sub);
-        }
+        const bodyText = buildStimulusTextByLength(sub, chosenStimType, stimulusLength, isEarlyGrade, g);
 
         const startNo = g * groupSize + 1;
         const endNo = Math.min(totalQuestions, (g + 1) * groupSize);
@@ -3293,14 +3277,230 @@ const firebaseConfig = {
       return groups;
     }
 
+    // Fungsi Live Editor: Ubah Panjang Teks Bacaan per Grup Stimulus (Ringkas 1 Paragraf / Sedang 2 Paragraf / Panjang 4 Paragraf)
+    window.adjustStimulusGroupLength = async function(groupId, targetLength) {
+      if (!activePackage || !Array.isArray(activePackage.questions)) return;
+      const groupQs = activePackage.questions.filter(q => q.stimulusGroupId === groupId);
+      if (groupQs.length === 0) return;
+
+      const leader = groupQs[0];
+      const subtopic = leader.subtopic || leader.stimulusTitle || activePackage.topic || activePackage.subject;
+      const stimType = leader.stimulusType || "TEKS_BACAAN";
+      const isEarlyGrade = (activePackage.grade || "").includes("Fase A") || (activePackage.grade || "").includes("Kelas 1") || (activePackage.grade || "").includes("Kelas 2");
+
+      const realKeys = stateApiKeys.filter(k => k.key && !k.key.startsWith("AIzaSyDEMO"));
+      const qSummary = groupQs.map((q, i) => `(${i + 1}) ${q.questionText}`).join(" ");
+
+      const lengthInstruction = targetLength === "SHORT"
+        ? "1 paragraf ringkas dan padat (sekitar 45-65 kata)"
+        : targetLength === "MEDIUM"
+        ? "2 paragraf sedang yang informatif (sekitar 100-140 kata, pisahkan paragraf dengan baris baru \\n\\n)"
+        : "3 sampai 4 paragraf panjang, kaya data/narasi, dan mendalam standar literasi AKM (sekitar 180-260 kata, pisahkan antar paragraf dengan \\n\\n)";
+
+      let newText = "";
+      if (realKeys.length > 0) {
+        showToast(`Menyusun ulang teks bacaan (${targetLength === "LONG" ? "Panjang 3-4 Paragraf" : targetLength === "MEDIUM" ? "Sedang 2 Paragraf" : "Ringkas 1 Paragraf"}) dengan AI...`, "info");
+        try {
+          const prompt = `Tuliskan teks stimulus bacaan berbahasa Indonesia yang menarik untuk jenjang ${activePackage.grade} dengan ketentuan:
+- Topik / Judul Stimulus: ${leader.stimulusTitle || subtopic}
+- Jenis Stimulus: ${STIMULUS_TYPE_META[stimType]?.label || stimType}
+- Panjang Bacaan WAJIB: ${lengthInstruction}
+- Konteks Pertanyaan yang harus terjawab oleh bacaan ini: ${qSummary}
+- DILARANG menyebutkan kata "peserta didik Fase..." atau "dalam mata pelajaran..." di dalam teks bacaan. Gunakan cerita/wacana alami.
+Kembalikan dalam JSON murni: {"title": "Judul Wacana Menarik", "stimulus": "Isi bacaan lengkap..."}`;
+          const res = await callGeminiWithMultiKeyFailover(prompt, stateSchoolSettings.selectedModel);
+          if (res && res.stimulus) {
+            newText = res.stimulus;
+            if (res.title) {
+              groupQs.forEach(q => { q.stimulusTitle = res.title; });
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!newText) {
+        newText = buildStimulusTextByLength(subtopic, stimType, targetLength, isEarlyGrade, 0);
+      }
+
+      groupQs.forEach(q => {
+        q.stimulus = newText;
+      });
+      renderExamEditorDocument();
+      showToast(`Panjang bacaan stimulus ${groupId} berhasil diatur ke mode ${targetLength === "LONG" ? "Panjang (3-4 Paragraf)" : targetLength === "MEDIUM" ? "Sedang (2 Paragraf)" : "Ringkas (1 Paragraf)"}!`, "success");
+    };
+
+    // Fungsi Live Editor: Buat Gambar Ilustrasi AI Otomatis Sesuai Isi Soal & Stimulus (SVG / Imagen / Pollinations Kontekstual)
+    window.generateAiImageForStimulus = async function(groupId) {
+      if (!activePackage || !Array.isArray(activePackage.questions)) return;
+      const groupQs = activePackage.questions.filter(q => q.stimulusGroupId === groupId);
+      if (groupQs.length === 0) return;
+
+      const leader = groupQs[0];
+      const title = leader.stimulusTitle || leader.subtopic || activePackage.topic || "Ilustrasi Materi";
+      const stimText = leader.stimulus || "";
+      const qTexts = groupQs.map((q, i) => `Soal ${i + 1}: ${q.questionText}`).join(" | ");
+
+      showToast(`Sedang membuat Gambar Ilustrasi AI sesuai isi soal untuk "${title}"...`, "info");
+
+      const realKeys = stateApiKeys.filter(k => k.key && !k.key.startsWith("AIzaSyDEMO"));
+      let generatedDataUri = "";
+
+      // 1. Jika ada API Key Gemini aktif, minta Gemini membuat ilustrasi vektor SVG edukatif berwarna & berlabel yang spesifik sesuai isi soal
+      if (realKeys.length > 0) {
+        try {
+          const svgPrompt = `Anda adalah Ilustrator Buku Pelajaran Nasional. Buatkan kode SVG (Scalable Vector Graphics) berwarna, rapi, detail, dan edukatif yang menggambarkan secara visual isi stimulus dan soal berikut:
+- Judul Stimulus: ${title}
+- Isi Wacana: ${stimText}
+- Pertanyaan Soal: ${qTexts}
+Ketentuan Wajib:
+1. Ukuran viewBox="0 0 680 280" dengan latar belakang lembut, ilustrasi visual objek utama (misal organ jantung/paru-paru, rantai makanan, ekosistem, rangkaian listrik, tokoh fabel, diagram alur, dsb. sesuai topik "${title}"), panah alur, dan label teks Bahasa Indonesia yang jelas & mudah dibaca.
+2. Kembalikan dalam format JSON murni: {"svgCode": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 680 280'>...</svg>"}`;
+          const aiSvgRes = await callGeminiWithMultiKeyFailover(svgPrompt, stateSchoolSettings.selectedModel);
+          if (aiSvgRes && aiSvgRes.svgCode && String(aiSvgRes.svgCode).includes("<svg")) {
+            const cleanSvg = String(aiSvgRes.svgCode).trim();
+            generatedDataUri = "data:image/svg+xml;utf8," + encodeURIComponent(cleanSvg);
+          }
+        } catch (_) {}
+      }
+
+      // 2. Jika tanpa API Key eksternal atau fallback, bangunkan Ilustrasi SVG Kontekstual Cerdas sesuai kata kunci materi soal (Jantung/Peredaran Darah, Rantai Makanan/Ekosistem, Tumbuhan/Fotosintesis, Wujud Zat/Energi, dll.)
+      if (!generatedDataUri) {
+        const contextualSvg = buildSmartContextualTopicSvg(title, stimText, qTexts);
+        generatedDataUri = "data:image/svg+xml;utf8," + encodeURIComponent(contextualSvg);
+      }
+
+      groupQs.forEach(q => {
+        q.customStimulusImage = generatedDataUri;
+      });
+      renderExamEditorDocument();
+      showToast(`Gambar Ilustrasi AI untuk "${title}" berhasil dibuat dan dipasang pada stimulus!`, "success");
+    };
+
+    // Generator Ilustrasi Visual SVG Kontekstual berdasarkan topik soal (Peredaran Darah/Jantung, Fotosintesis/Tumbuhan, Ekosistem, Energi, dll.)
+    function buildSmartContextualTopicSvg(title, stimText, qTexts) {
+      const combined = `${title} ${stimText} ${qTexts}`.toLowerCase();
+      const safeTitle = escapeHtml(title.substring(0, 52));
+
+      // Topik 1: Jantung & Sistem Peredaran Darah Manusia (Sesuai contoh pada gambar pengguna!)
+      if (combined.includes("jantung") || combined.includes("darah") || combined.includes("serambi") || combined.includes("bilik") || combined.includes("paru")) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 280" width="100%" height="100%">
+          <rect width="680" height="280" rx="14" fill="#FFFDF7" stroke="#FDE68A" stroke-width="2"/>
+          <text x="340" y="26" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#0F172A">SKEMA VISUAL AI: ${safeTitle.toUpperCase()}</text>
+          <!-- Paru-paru Atas -->
+          <rect x="250" y="40" width="180" height="42" rx="10" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+          <text x="340" y="59" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#1E3A8A">PARU-PARU (Pertukaran O₂ &amp; CO₂)</text>
+          <text x="340" y="74" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#1D4ED8">Darah kaya Oksigen (O₂) mengalir ke Serambi Kiri</text>
+          <!-- 4 Ruang Jantung Tengah -->
+          <rect x="175" y="102" width="158" height="52" rx="8" fill="#EFF6FF" stroke="#3B82F6" stroke-width="2"/>
+          <text x="254" y="124" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#1D4ED8">1. SERAMBI KANAN</text>
+          <text x="254" y="141" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">Menerima darah kaya CO₂ dari tubuh</text>
+
+          <rect x="347" y="102" width="158" height="52" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="2"/>
+          <text x="426" y="124" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#B91C1C">2. SERAMBI KIRI</text>
+          <text x="426" y="141" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">Menerima darah kaya O₂ dari paru-paru</text>
+
+          <rect x="175" y="164" width="158" height="54" rx="8" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+          <text x="254" y="186" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#1E3A8A">3. BILIK KANAN</text>
+          <text x="254" y="203" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">Memompa darah kaya CO₂ ke paru-paru</text>
+
+          <rect x="347" y="164" width="158" height="54" rx="8" fill="#FEE2E2" stroke="#DC2626" stroke-width="2"/>
+          <text x="426" y="186" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#991B1B">4. BILIK KIRI</text>
+          <text x="426" y="203" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">Memompa darah kaya O₂ ke seluruh tubuh</text>
+
+          <!-- Seluruh Tubuh Bawah -->
+          <rect x="235" y="232" width="210" height="36" rx="10" fill="#ECFDF5" stroke="#059669" stroke-width="2"/>
+          <text x="340" y="254" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#065F46">SELURUH JARINGAN &amp; SEL TUBUH</text>
+
+          <!-- Alur Sirkulasi Kiri & Kanan -->
+          <path d="M175 190 L95 190 L95 60 L245 60" fill="none" stroke="#2563EB" stroke-width="3" stroke-dasharray="5,3"/>
+          <text x="85" y="128" text-anchor="middle" font-family="Arial" font-size="9.5" font-weight="bold" fill="#1D4ED8" transform="rotate(-90 85 128)">Arteri Pulmonalis (CO₂)</text>
+
+          <path d="M505 190 L585 190 L585 250 L450 250" fill="none" stroke="#DC2626" stroke-width="3"/>
+          <text x="598" y="165" text-anchor="middle" font-family="Arial" font-size="9.5" font-weight="bold" fill="#B91C1C" transform="rotate(90 598 165)">Aorta • Kaya O₂ &amp; Nutrisi</text>
+        </svg>`;
+      }
+
+      // Topik 2: Rantai Makanan / Ekosistem / Lingkungan
+      if (combined.includes("ekosistem") || combined.includes("rantai makanan") || combined.includes("produsen") || combined.includes("konsumen") || combined.includes("hutan") || combined.includes("sungai")) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 260" width="100%" height="100%">
+          <rect width="680" height="260" rx="14" fill="#F0FDF4" stroke="#86EFAC" stroke-width="2"/>
+          <text x="340" y="28" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#14532D">ILUSTRASI AI EKOSISTEM &amp; ALIRAN ENERGI: ${safeTitle.toUpperCase()}</text>
+          <circle cx="65" cy="70" r="26" fill="#FBBF24"/>
+          <text x="65" y="112" text-anchor="middle" font-family="Arial" font-size="10" font-weight="bold" fill="#B45309">Energi Surya</text>
+
+          <rect x="125" y="55" width="115" height="75" rx="10" fill="#DCFCE7" stroke="#16A34A" stroke-width="2"/>
+          <text x="182" y="82" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#166534">PRODUSEN</text>
+          <text x="182" y="100" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#15803D">Tumbuhan Hijau /</text>
+          <text x="182" y="114" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#15803D">Fitoplankton</text>
+
+          <path d="M245 92 L275 92" stroke="#16A34A" stroke-width="3"/>
+          <polygon points="273,87 283,92 273,97" fill="#16A34A"/>
+
+          <rect x="288" y="55" width="115" height="75" rx="10" fill="#FEF9C3" stroke="#CA8A04" stroke-width="2"/>
+          <text x="345" y="82" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#854D0E">KONSUMEN I</text>
+          <text x="345" y="100" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#713F12">Herbivora /</text>
+          <text x="345" y="114" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#713F12">Pemakan Tumbuhan</text>
+
+          <path d="M408 92 L438 92" stroke="#CA8A04" stroke-width="3"/>
+          <polygon points="436,87 446,92 436,97" fill="#CA8A04"/>
+
+          <rect x="450" y="55" width="115" height="75" rx="10" fill="#FFEDD5" stroke="#EA580C" stroke-width="2"/>
+          <text x="507" y="82" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#9A3412">KONSUMEN II</text>
+          <text x="507" y="100" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#7C2D12">Karnivora /</text>
+          <text x="507" y="114" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#7C2D12">Predator</text>
+
+          <rect x="180" y="165" width="330" height="62" rx="10" fill="#FFFFFF" stroke="#059669" stroke-width="2"/>
+          <text x="345" y="190" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#065F46">PENGURAI (DEKOMPOSER) &amp; KESEIMBANGAN LINGKUNGAN</text>
+          <text x="345" y="209" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">Bakteri &amp; Jamur menguraikan zat organik kembali menjadi unsur hara tanah</text>
+        </svg>`;
+      }
+
+      // Default Universal Rich Educational Visual Diagram
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 260" width="100%" height="100%">
+        <rect width="680" height="260" rx="14" fill="#F8FAFC" stroke="#93C5FD" stroke-width="2"/>
+        <rect x="16" y="14" width="648" height="36" rx="8" fill="#1D4ED8"/>
+        <text x="340" y="37" text-anchor="middle" font-family="Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#FFFFFF">GAMBAR STIMULUS AI: ${safeTitle.toUpperCase()}</text>
+
+        <rect x="28" y="68" width="190" height="115" rx="10" fill="#EFF6FF" stroke="#3B82F6" stroke-width="2"/>
+        <circle cx="123" cy="96" r="16" fill="#2563EB"/>
+        <text x="123" y="101" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="#FFFFFF">1</text>
+        <text x="123" y="130" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#1E3A8A">KONSEP &amp; FAKTA INTI</text>
+        <text x="123" y="148" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">Identifikasi komponen utama</text>
+        <text x="123" y="163" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">pada ${safeTitle.substring(0, 22)}</text>
+
+        <path d="M224 125 L242 125" stroke="#2563EB" stroke-width="3"/>
+        <polygon points="240,120 250,125 240,130" fill="#2563EB"/>
+
+        <rect x="252" y="68" width="180" height="115" rx="10" fill="#FEF3C7" stroke="#D97706" stroke-width="2"/>
+        <circle cx="342" cy="96" r="16" fill="#D97706"/>
+        <text x="342" y="101" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="#FFFFFF">2</text>
+        <text x="342" y="130" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#78350F">MEKANISME &amp; PROSES</text>
+        <text x="342" y="148" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#475569">Hubungan sebab-akibat</text>
+        <text x="342" y="163" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#475569">dan cara kerja sistem</text>
+
+        <path d="M438 125 L456 125" stroke="#059669" stroke-width="3"/>
+        <polygon points="454,120 464,125 454,130" fill="#059669"/>
+
+        <rect x="466" y="68" width="186" height="115" rx="10" fill="#ECFDF5" stroke="#059669" stroke-width="2"/>
+        <circle cx="559" cy="96" r="16" fill="#059669"/>
+        <text x="559" y="101" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="#FFFFFF">3</text>
+        <text x="559" y="130" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold" fill="#065F46">HASIL &amp; PENERAPAN</text>
+        <text x="559" y="148" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">Manfaat nyata dalam</text>
+        <text x="559" y="163" text-anchor="middle" font-family="Arial" font-size="9.5" fill="#334155">kehidupan sehari-hari</text>
+
+        <rect x="28" y="200" width="624" height="42" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+        <text x="340" y="225" text-anchor="middle" font-family="Arial" font-size="10.5" font-weight="bold" fill="#1E293B">Amati keterkaitan antara Komponen (1), Proses (2), dan Hasil Penerapan (3) di atas untuk menjawab soal!</text>
+      </svg>`;
+    }
+
     // Intelligent Structured Fallback Generator (Produces EXACT total questions requested, grouped max 3 per stimulus & mixed types)
     function buildContextualStructuredQuestions(params) {
-      const { title, subject, grade, topic, quotas, cogLevels, pctDistribution, withStimulus, orderMode = "mixed", maxPerStimulus = 3, stimulusTypes = [] } = params;
+      const { title, subject, grade, topic, quotas, cogLevels, pctDistribution, withStimulus, orderMode = "mixed", maxPerStimulus = 3, stimulusTypes = [], stimulusLength = "LONG" } = params;
       const groupSize = Math.max(1, Math.min(3, Number(maxPerStimulus) || 3));
       const typeSequence = buildMixedTypeSequence(quotas, orderMode);
       const totalQuestions = typeSequence.length;
       const levelSequence = buildCognitiveLevelSequence(totalQuestions, cogLevels, pctDistribution);
-      const stimulusGroups = createContextualStimulusGroups(totalQuestions, groupSize, subject, grade, topic, stimulusTypes);
+      const stimulusGroups = createContextualStimulusGroups(totalQuestions, groupSize, subject, grade, topic, stimulusTypes, stimulusLength);
 
       const questions = [];
       let typeCounters = { PG: 0, PGK: 0, MENJODOHKAN: 0, ISIAN: 0, URAIAN: 0 };
@@ -3504,7 +3704,8 @@ const firebaseConfig = {
         params.subject,
         params.grade,
         params.topic,
-        params.stimulusTypes
+        params.stimulusTypes,
+        params.stimulusLength || "LONG"
       );
 
       const aiStimuli = [];
@@ -3721,6 +3922,7 @@ const firebaseConfig = {
       const withStimulus = document.getElementById("gen-with-stimulus").checked;
       const orderMode = document.getElementById("gen-order-mode")?.value || "mixed";
       const maxPerStimulus = parseInt(document.getElementById("gen-max-per-stimulus")?.value || "3", 10) || 3;
+      const stimulusLength = document.getElementById("gen-stimulus-length")?.value || "LONG";
       const pctDistribution = window.updateCognitivePercentages();
 
       stateSchoolSettings.selectedModel = model;
@@ -3737,6 +3939,14 @@ const firebaseConfig = {
       const targetLevelSequence = buildCognitiveLevelSequence(quotas.total, checkedLevels, pctDistribution);
       const totalStimulusCount = Math.ceil(quotas.total / maxPerStimulus);
 
+      const stimulusLengthRule = stimulusLength === "SHORT"
+        ? "RINGKAS & PADAT: Setiap teks stimulus terdiri atas 1 paragraf pendek (45–65 kata) yang langsung pada inti materi."
+        : stimulusLength === "MEDIUM"
+        ? "SEDANG (2 PARAGRAF): Setiap teks stimulus WAJIB terdiri atas 2 paragraf utuh (100–150 kata, pisahkan paragraf dengan \\n\\n)."
+        : stimulusLength === "VARIED"
+        ? "BERVARIASI SESUAI NOMOR & LEVEL: Untuk grup soal awal (LOTS C1-C2) gunakan bacaan singkat 1 paragraf, sedangkan untuk grup soal menengah & akhir (MOTS C3 & HOTS C4-C6) WAJIB gunakan bacaan panjang 3–4 paragraf mendalam (170–240 kata)."
+        : "PANJANG & MENDALAM (3–4 PARAGRAF UTUH): Setiap teks stimulus WAJIB berupa bacaan/cerita/artikel lengkap 3 sampai 4 paragraf (160–250 kata per stimulus, pisahkan antar paragraf dengan \\n\\n) sebagaimana standar soal AKM Literasi/Sains Nasional. DILARANG membuat bacaan yang hanya 2-3 kalimat pendek!";
+
       appendGenLog(`Memulai penyusunan tepat ${quotas.total} butir soal (${subject} - ${grade}) dengan proporsi LOTS ${pctDistribution.lotsPct}% (${pctDistribution.lotsCount} soal), MOTS ${pctDistribution.motsPct}% (${pctDistribution.motsCount} soal), HOTS ${pctDistribution.hotsPct}% (${pctDistribution.hotsCount} soal)...`, "text-white font-bold");
 
       const systemPrompt = `
@@ -3748,6 +3958,8 @@ Buatkan paket soal lengkap dalam format JSON murni dengan spesifikasi WAJIB beri
 - Materi Pokok / CP / TP: ${topic}
 - Proporsi Level Kognitif WAJIB: LOTS (C1-C2) = ${pctDistribution.lotsCount} soal (${pctDistribution.lotsPct}%), MOTS (C3) = ${pctDistribution.motsCount} soal (${pctDistribution.motsPct}%), HOTS (C4-C6) = ${pctDistribution.hotsCount} soal (${pctDistribution.hotsPct}%).
 - Bentuk / Jenis Stimulus Multimodal yang dipilih: ${stimulusTypes.join(", ")}
+- ATURAN PANJANG & KEDALAMAN TEKS BACAAN STIMULUS (SANGAT PENTING):
+  ${stimulusLengthRule}
 - ATURAN GAYA BAHASA & KEBERAGAMAN STIMULUS (WAJIB DIPATUHI):
   1. DILARANG KERAS menggunakan frasa kaku seperti "Tim peneliti bersama peserta didik Fase B - SD/MI Kelas 4..." atau menyebutkan nama Fase/Kelas/Mata Pelajaran di dalam cerita stimulus!
   2. Gunakan tokoh dengan nama alami (misal: Damar, Kirana, Bagas, Nisa, Pak Rahmat, Ibu Sari, warga Desa Sukamaju) atau tokoh hewan jika bertipe Cerita Fabel (misal: Kiki si Kelinci, Boni si Tupai, Pipit si Burung Kecil di Hutan Rimba).
@@ -3804,7 +4016,8 @@ Struktur JSON Output yang WAJIB dikembalikan (harus berisi tepat ${quotas.total}
           withStimulus,
           orderMode,
           maxPerStimulus,
-          stimulusTypes
+          stimulusTypes,
+          stimulusLength
         };
         let rawAiData = await callGeminiWithMultiKeyFailover(systemPrompt, model);
         if (!rawAiData) {
@@ -4009,11 +4222,20 @@ Struktur JSON Output yang WAJIB dikembalikan (harus berisi tepat ${quotas.total}
                   <i class="fa-solid ${stimMeta.icon}" style="margin-right: 6px; color: #B45309;"></i>
                   ${escapeHtml(rangeLabel)}
                 </div>
-                <div class="no-print" contenteditable="false" style="display: flex; align-items: center; gap: 6px; font-family: 'Plus Jakarta Sans', sans-serif;">
-                  <select onchange="window.changeStimulusGroupType('${stimInfo.groupId}', this.value)" style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid #D97706; background: #FFFFFF; color: #78350F;">
+                <div class="no-print" contenteditable="false" style="display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-family: 'Plus Jakarta Sans', sans-serif;">
+                  <select onchange="window.changeStimulusGroupType('${stimInfo.groupId}', this.value)" style="font-size: 10px; font-weight: 700; padding: 3px 6px; border-radius: 6px; border: 1px solid #D97706; background: #FFFFFF; color: #78350F;">
                     ${Object.keys(STIMULUS_TYPE_META).map(k => `<option value="${k}" ${k === stimInfo.stimulusType ? 'selected' : ''}>${STIMULUS_TYPE_META[k].label}</option>`).join("")}
                   </select>
-                  <button type="button" onclick="window.triggerStimulusImageUpload('${stimInfo.groupId}')" style="font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: #2563EB; color: #FFFFFF; border: none; cursor: pointer;">
+                  <select onchange="if(this.value){ window.adjustStimulusGroupLength('${stimInfo.groupId}', this.value); this.value=''; }" style="font-size: 10px; font-weight: 700; padding: 3px 6px; border-radius: 6px; border: 1px solid #0284C7; background: #F0F9FF; color: #0369A1;" title="Atur panjang teks bacaan untuk stimulus ini">
+                    <option value="">📏 Panjang Bacaan...</option>
+                    <option value="SHORT">Ringkas (1 Paragraf)</option>
+                    <option value="MEDIUM">Sedang (2 Paragraf)</option>
+                    <option value="LONG">Panjang &amp; Mendalam (3–4 Paragraf)</option>
+                  </select>
+                  <button type="button" onclick="window.generateAiImageForStimulus('${stimInfo.groupId}')" style="font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: #7C3AED; color: #FFFFFF; border: none; cursor: pointer;" title="Buat gambar ilustrasi visual otomatis menggunakan AI sesuai isi soal">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Buat Gambar AI
+                  </button>
+                  <button type="button" onclick="window.triggerStimulusImageUpload('${stimInfo.groupId}')" style="font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: #2563EB; color: #FFFFFF; border: none; cursor: pointer;">
                     <i class="fa-solid fa-upload"></i> Upload Gambar
                   </button>
                 </div>
