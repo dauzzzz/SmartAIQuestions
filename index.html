@@ -3193,8 +3193,136 @@ const firebaseConfig = {
         .join("");
     }
 
+    // Helper: Ekstrak Tema/Subtopik Natural dari input yang mengandung kalimat "Capaian Pembelajaran (CP): Peserta didik mampu..."
+    function cleanAdministrativeTopicPhrase(rawStr, fallbackSubject = "Fenomena Sains & Lingkungan") {
+      if (!rawStr) return fallbackSubject;
+      let s = String(rawStr).trim();
+
+      // Hapus label administratif CP / TP / Indikator / Materi Pokok
+      s = s.replace(/\b(capaian\s+pembelajaran|tujuan\s+pembelajaran|indikator\s+pencapaian|indikator\s+soal|materi\s+pokok|elemen|kompetensi\s+dasar)\s*(\((cp|tp|kd|ipk)\))?\s*[:\-–]?/gi, " ");
+      s = s.replace(/\b(cp|tp|kd)\s*[:\-–]/gi, " ");
+
+      // Hapus frasa "Peserta didik / Siswa (Fase ...) (mampu / dapat / diharapkan) + kata kerja operasional"
+      s = s.replace(/\b(melalui\s+[^,.;]+,\s*)?(peserta\s+didik|siswa|murid|anak-anak)\s*(\([^)]*\))?\s*(diharapkan\s+|dapat\s+|mampu\s+|akan\s+)?(memahami|menganalisis|mengidentifikasi|menjelaskan|mendeskripsikan|menerapkan|mengevaluasi|merumuskan|menyimpulkan|menyebutkan|mengenal|mengamati|membedakan|mengelompokkan|menunjukkan|mempraktikkan|menyajikan|menguraikan|menentukan|membuat|merancang)\b/gi, " ");
+
+      // Hapus kata kerja operasional yang masih tersisa setelah kata hubung "dan / serta / atau"
+      s = s.replace(/\b(dan|serta|atau)\s+(mampu\s+|dapat\s+)?(memahami|menganalisis|mengidentifikasi|menjelaskan|mendeskripsikan|menerapkan|mengevaluasi|merumuskan|menyimpulkan|menyebutkan|mengenal|mengamati|membedakan|mengelompokkan)\b/gi, " dan ");
+
+      // Hapus keterangan "dalam kehidupan sehari-hari" di ujung agar topik padat & natural
+      s = s.replace(/\b(dalam\s+kehidupan\s+sehari-hari|di\s+lingkungan\s+sekitar\s+kita)\b/gi, "");
+
+      s = s.replace(/\s+/g, " ").replace(/^[,;:\-–.\s]+|[,;:\-–.\s]+$/g, "").trim();
+      if (!s || s.length < 3) return fallbackSubject;
+
+      // Kapitalisasi huruf awal agar tampak rapi
+      return s.charAt(0).toUpperCase() + s.slice(1);
+    }
+
+    // Pecah input topik/CP/TP yang panjang menjadi daftar sub-tema natural yang bersih
+    function extractNaturalSubtopicsList(rawTopic, subject = "Lingkungan & Kehidupan") {
+      if (!rawTopic) return [cleanAdministrativeTopicPhrase(subject)];
+
+      // Pertama: bersihkan label CP/TP secara global lalu pecah berdasarkan titik, koma, titik koma, atau kata hubung "serta"
+      const parts = String(rawTopic)
+        .split(/[.;\n]+|,|\bserta\b/i)
+        .map(item => cleanAdministrativeTopicPhrase(item, ""))
+        .filter(item => item && item.length >= 4);
+
+      // Jika suatu sub-tema masih terlalu panjang karena ada "dan menganalisis...", pecah juga pada kata " dan "
+      const refined = [];
+      parts.forEach(p => {
+        if (p.length > 55 && /\bdan\b/i.test(p)) {
+          p.split(/\bdan\b/i).forEach(subPart => {
+            const cleaned = cleanAdministrativeTopicPhrase(subPart, "");
+            if (cleaned && cleaned.length >= 4) refined.push(cleaned);
+          });
+        } else {
+          refined.push(p);
+        }
+      });
+
+      return refined.length > 0 ? refined : [cleanAdministrativeTopicPhrase(rawTopic, subject)];
+    }
+
+    // Buat Judul Bacaan/Wacana yang Natural sesuai jenis stimulus & tema (tanpa kata "Stimulus X (Poster): Capaian Pembelajaran...")
+    function buildNaturalStimulusTitle(subtopic, chosenStimType, groupIndex = 0) {
+      const cleanSub = cleanAdministrativeTopicPhrase(subtopic, "Keseimbangan Alam");
+      const titleSub = cleanSub.replace(/\b\w/g, c => c.toUpperCase());
+
+      if (chosenStimType === "CERITA_FABEL") {
+        const fabelTitles = [
+          `Kisah Penghuni Rimba dan ${titleSub}`,
+          `Gotong Royong di Lembah Hijau: ${titleSub}`,
+          `Petualangan Kiki dan Sahabat Mengenal ${titleSub}`
+        ];
+        return fabelTitles[groupIndex % fabelTitles.length];
+      }
+      if (chosenStimType === "CERITA_ANAK_FIKSI") {
+        const ceritaTitles = [
+          `Pengalaman Berharga Mengamati ${titleSub}`,
+          `Catatan Akhir Pekan: Menjaga ${titleSub}`,
+          `Rasa Ingin Tahu Damar tentang ${titleSub}`
+        ];
+        return ceritaTitles[groupIndex % ceritaTitles.length];
+      }
+      if (chosenStimType === "POSTER" || chosenStimType === "INFOGRAFIS") {
+        return `Mengenal Lebih Dekat: ${titleSub}`;
+      }
+      if (chosenStimType === "TABEL_DATA" || chosenStimType === "GRAFIK_DIAGRAM") {
+        return `Data Hasil Pengamatan ${titleSub}`;
+      }
+      if (chosenStimType === "PERCAKAPAN") {
+        return `Obrolan Santai Seputar ${titleSub}`;
+      }
+      const nonFiksiTitles = [
+        `Pentingnya ${titleSub} dalam Kehidupan`,
+        `Mengenal Mekanisme dan Peran ${titleSub}`,
+        `Menjaga Keseimbangan ${titleSub}`
+      ];
+      return nonFiksiTitles[groupIndex % nonFiksiTitles.length];
+    }
+
+    // Bersihkan teks yang terlanjur memiliki "Capaian Pembelajaran (CP): Peserta didik..." pada paket soal yang sedang aktif
+    function sanitizeExistingQuestionAdministrativeText(q, fallbackSubject = "Konsep Utama") {
+      if (!q) return q;
+      const cleanSub = cleanAdministrativeTopicPhrase(q.subtopic || fallbackSubject, fallbackSubject);
+      q.subtopic = cleanSub;
+
+      if (q.stimulusTitle) {
+        if (/capaian\s+pembelajaran|tujuan\s+pembelajaran|peserta\s+didik\s+mampu|^stimulus\s+\d+\s*\(/i.test(q.stimulusTitle)) {
+          q.stimulusTitle = buildNaturalStimulusTitle(cleanSub, q.stimulusType || "TEKS_BACAAN", (q.number || 1) - 1);
+        } else {
+          q.stimulusTitle = cleanAdministrativeTopicPhrase(q.stimulusTitle, cleanSub);
+        }
+      }
+
+      const replaceAdminInContent = (txt) => {
+        if (!txt) return "";
+        return String(txt)
+          .replace(/"?\b(Capaian\s+Pembelajaran\s*(\(CP\))?|Tujuan\s+Pembelajaran\s*(\(TP\))?)\s*:\s*Peserta\s+didik\s+(mampu\s+|dapat\s+)?(memahami|menganalisis|mengidentifikasi|menjelaskan|mendeskripsikan|menerapkan)\s+([^".?!]+)"?/gi, (_, _1, _2, _3, _4, _5, coreTopic) => {
+            return cleanAdministrativeTopicPhrase(coreTopic, cleanSub).toLowerCase();
+          })
+          .replace(/\b(Capaian\s+Pembelajaran\s*(\(CP\))?|Tujuan\s+Pembelajaran\s*(\(TP\))?)\s*:\s*/gi, "")
+          .replace(/\bPeserta\s+didik\s+(mampu\s+|dapat\s+)?(memahami|menganalisis|mengidentifikasi|menjelaskan|menerapkan)\s+/gi, "");
+      };
+
+      if (q.stimulus) q.stimulus = replaceAdminInContent(q.stimulus);
+      if (q.questionText) q.questionText = replaceAdminInContent(q.questionText);
+      if (Array.isArray(q.options)) {
+        q.options = q.options.map(opt => replaceAdminInContent(opt));
+      }
+      if (Array.isArray(q.matchingPairs)) {
+        q.matchingPairs = q.matchingPairs.map(mp => ({
+          premise: replaceAdminInContent(mp.premise),
+          match: replaceAdminInContent(mp.match)
+        }));
+      }
+      return q;
+    }
+
     // Helper: Build Stimulus Narrative with Configurable Length (SHORT = 1 Paragraf, MEDIUM = 2 Paragraf, LONG = 3-4 Paragraf)
-    function buildStimulusTextByLength(sub, chosenStimType, lengthMode, isEarlyGrade, groupIndex = 0) {
+    function buildStimulusTextByLength(rawSub, chosenStimType, lengthMode, isEarlyGrade, groupIndex = 0) {
+      const sub = cleanAdministrativeTopicPhrase(rawSub, "keseimbangan lingkungan").toLowerCase();
       const effectiveMode = lengthMode === "VARIED"
         ? (groupIndex % 3 === 0 ? "SHORT" : groupIndex % 3 === 1 ? "MEDIUM" : "LONG")
         : (lengthMode || "LONG");
@@ -3207,24 +3335,24 @@ const firebaseConfig = {
 
       if (chosenStimType === "CERITA_FABEL") {
         p1 = isEarlyGrade
-          ? `Di Hutan Rimba Hijau yang sejuk, hiduplah Kiki si Kelinci Putih dan Boni si Tupai Cokelat yang gemar merawat tanaman di tepi sungai. Suatu pagi yang cerah, mereka memperhatikan perubahan menarik yang berkaitan dengan "${sub}" di sekitar tempat tinggal mereka.`
-          : `Di Lembah Lembayung yang subur, Pipit si Burung Kecil, Rusa Tanduk Emas, dan Katak Hijau hidup berdampingan dengan rukun. Setiap penghuni lembah memiliki peran masing-masing yang berkaitan erat dengan "${sub}" sehingga ketersediaan air jernih dan sumber makanan selalu tercukupi.`;
-        p2 = `Ketika musim kemarau mulai tiba, Boni melihat bahwa beberapa bagian di tepi telaga mengalami perubahan akibat kurangnya perhatian terhadap "${sub}". Kakek Kura-kura yang bijaksana pun mengumpulkan seluruh penghuni hutan di bawah pohon beringin besar untuk berdiskusi mencari penyebab dan solusinya.`;
-        p3 = `Menurut penjelasan Kakek Kura-kura, keseimbangan "${sub}" tidak terjadi secara kebetulan, melainkan karena adanya keteraturan antara komponen alam dan perilaku penghuninya. Apabila satu bagian terganggu, maka seluruh warga hutan akan merasakan dampaknya secara berantai.`;
-        p4 = `Sejak hari itu, Kiki, Boni, Pipit, dan teman-temannya membagi jadwal kerja bakti untuk merawat "${sub}" dengan penuh tanggung jawab. Tidak lama kemudian, Lembah Lembayung kembali rimbun, sejuk, dan memberikan manfaat berlimpah bagi seluruh makhluk hidup di dalamnya.`;
+          ? `Di Hutan Rimba Hijau yang sejuk, hiduplah Kiki si Kelinci Putih dan Boni si Tupai Cokelat yang gemar merawat tanaman di tepi sungai. Suatu pagi yang cerah, mereka memperhatikan perubahan menarik yang berkaitan dengan ${sub} di sekitar tempat tinggal mereka.`
+          : `Di Lembah Lembayung yang subur, Pipit si Burung Kecil, Rusa Tanduk Emas, dan Katak Hijau hidup berdampingan dengan rukun. Setiap penghuni lembah memiliki peran masing-masing yang berkaitan erat dengan ${sub} sehingga ketersediaan air jernih dan sumber makanan selalu tercukupi.`;
+        p2 = `Ketika musim kemarau mulai tiba, Boni melihat bahwa beberapa bagian di tepi telaga mengalami perubahan akibat kurangnya perhatian terhadap ${sub}. Kakek Kura-kura yang bijaksana pun mengumpulkan seluruh penghuni hutan di bawah pohon beringin besar untuk berdiskusi mencari penyebab dan solusinya.`;
+        p3 = `Menurut penjelasan Kakek Kura-kura, keseimbangan ${sub} tidak terjadi secara kebetulan, melainkan karena adanya keteraturan antara komponen alam dan perilaku penghuninya. Apabila satu bagian terganggu, maka seluruh warga hutan akan merasakan dampaknya secara berantai.`;
+        p4 = `Sejak hari itu, Kiki, Boni, Pipit, dan teman-temannya membagi jadwal kerja bakti untuk merawat ${sub} dengan penuh tanggung jawab. Tidak lama kemudian, Lembah Lembayung kembali rimbun, sejuk, dan memberikan manfaat berlimpah bagi seluruh makhluk hidup di dalamnya.`;
       } else if (chosenStimType === "CERITA_ANAK_FIKSI") {
         p1 = isEarlyGrade
-          ? `Sore itu setelah hujan reda, Damar dan adiknya, Kirana, membantu Ibu merapikan taman kecil di halaman rumah. Damar sangat antusias mengamati fenomena yang berkaitan dengan "${sub}" yang tampak jelas di sekitar tanaman bunga milik Ibu.`
-          : `Saat liburan akhir pekan di Desa Suka Makmur, Bagas, Nisa, dan Rafi diajak Kakek mengunjungi kebun terpadu serta aliran sungai bersih di pinggir desa. Di sepanjang perjalanan, Kakek menunjukkan contoh nyata mengenai "${sub}" yang selama ini dipelihara dengan baik oleh warga.`;
-        p2 = `Nisa mengeluarkan buku catatannya dan mulai menuliskan hasil pengamatannya secara terperinci. Ia menemukan bahwa cara kerja "${sub}" melibatkan beberapa tahapan penting yang saling mendukung satu sama lain agar menghasilkan manfaat yang optimal.`;
-        p3 = `Kakek kemudian menceritakan bahwa beberapa tahun lalu warga desa pernah menghadapi kendala ketika prinsip "${sub}" diabaikan. Namun, berkat kemauan belajar dan kerja sama antarwarga, mereka berhasil menerapkan langkah perbaikan yang tepat dan terukur.`;
-        p4 = `Sekembalinya dari rumah Kakek, Bagas, Nisa, dan Rafi bertekad membagikan pengalaman berharga tentang "${sub}" tersebut kepada teman-teman mereka. Mereka menyadari bahwa pengetahuan yang diterapkan dalam kebiasaan sehari-hari dapat membawa perubahan positif yang besar.`;
+          ? `Sore itu setelah hujan reda, Damar dan adiknya, Kirana, membantu Ibu merapikan taman kecil di halaman rumah. Damar sangat antusias mengamati fenomena yang berkaitan dengan ${sub} yang tampak jelas di sekitar tanaman bunga milik Ibu.`
+          : `Saat liburan akhir pekan di Desa Suka Makmur, Bagas, Nisa, dan Rafi diajak Kakek mengunjungi kebun terpadu serta aliran sungai bersih di pinggir desa. Di sepanjang perjalanan, Kakek menunjukkan contoh nyata mengenai ${sub} yang selama ini dipelihara dengan baik oleh warga.`;
+        p2 = `Nisa mengeluarkan buku catatannya dan mulai menuliskan hasil pengamatannya secara terperinci. Ia menemukan bahwa cara kerja ${sub} melibatkan beberapa tahapan penting yang saling mendukung satu sama lain agar menghasilkan manfaat yang optimal.`;
+        p3 = `Kakek kemudian menceritakan bahwa beberapa tahun lalu warga desa pernah menghadapi kendala ketika keseimbangan ${sub} terabaikan. Namun, berkat kemauan belajar dan kerja sama antarwarga, mereka berhasil menerapkan langkah perbaikan yang tepat dan terukur.`;
+        p4 = `Sekembalinya dari rumah Kakek, Bagas, Nisa, dan Rafi bertekad menerapkan kebiasaan baik dalam menjaga ${sub} di rumah masing-masing. Mereka menyadari bahwa kepedulian yang dilakukan secara konsisten setiap hari dapat membawa perubahan positif yang besar.`;
       } else {
-        // Non-Fiksi / Artikel Ilmiah Populer / Studi Kasus
-        p1 = `Dalam kehidupan sehari-hari, keberadaan dan mekanisme "${sub}" memegang peranan yang sangat krusial bagi keteraturan sistem di sekitarnya. Setiap bagian di dalam "${sub}" memiliki fungsi spesifik yang bekerja secara berkesinambungan untuk mendukung proses utama secara menyeluruh.`;
-        p2 = `Berdasarkan hasil pengamatan dan pencatatan data di lapangan, keterkaitan antar-komponen pada "${sub}" dipengaruhi oleh berbagai faktor internal maupun faktor lingkungan luar. Ketika seluruh faktor pendukung berada dalam kondisi seimbang, kinerja "${sub}" dapat berlangsung dengan efisiensi yang tinggi.`;
-        p3 = `Sebaliknya, apabila salah satu komponen utama pada "${sub}" mengalami gangguan atau penurunan fungsi, maka proses secara keseluruhan akan ikut terhambat. Hal ini membuktikan adanya hubungan sebab-akibat yang erat antara pemeliharaan komponen dengan daya dukung sistem dalam jangka panjang.`;
-        p4 = `Oleh karena itu, pemahaman yang mendalam serta langkah pengelolaan yang tepat terhadap "${sub}" sangat diperlukan dalam berbagai situasi nyata. Penerapan kebiasaan positif, pemantauan berkala, dan pemecahan masalah berbasis data menjadi kunci utama agar manfaat "${sub}" dapat terus dirasakan secara berkelanjutan.`;
+        // Non-Fiksi / Artikel Ilmiah Populer / Studi Kasus Natural
+        p1 = `Dalam kehidupan sehari-hari, keberadaan dan cara kerja ${sub} memegang peranan yang sangat penting bagi keteraturan sistem di sekitarnya. Setiap bagian yang terlibat di dalam ${sub} memiliki fungsi khusus yang saling berkaitan untuk mendukung proses utama secara menyeluruh.`;
+        p2 = `Berdasarkan hasil pengamatan di lapangan, keseimbangan pada ${sub} dipengaruhi oleh kondisi internal maupun perubahan lingkungan di sekitarnya. Ketika seluruh bagian pendukung bekerja dengan baik dan terjaga kebersihannya, proses pada ${sub} dapat berlangsung secara optimal.`;
+        p3 = `Sebaliknya, apabila salah satu bagian utama pada ${sub} mengalami gangguan atau kerusakan, maka proses yang lain juga akan ikut terhambat. Hal ini membuktikan adanya hubungan sebab-akibat yang erat antarbagian sehingga diperlukan perhatian dan perawatan yang teratur.`;
+        p4 = `Oleh karena itu, penerapan pola hidup sehat, pengamatan yang teliti, serta langkah pemeliharaan yang tepat terhadap ${sub} sangat diperlukan dalam keseharian. Kebiasaan positif yang dilakukan secara berkelanjutan akan memberikan manfaat jangka panjang bagi kesehatan maupun kelestarian lingkungan.`;
       }
 
       if (effectiveMode === "SHORT") {
@@ -3237,16 +3365,11 @@ const firebaseConfig = {
     }
 
     // Helper: Generate Rich Contextual Stimulus Bank per Group (Max 3 Questions per Stimulus)
-    // Mendukung pilihan panjang bacaan (SHORT, MEDIUM, LONG, VARIED)
+    // Mendukung pilihan panjang bacaan (SHORT, MEDIUM, LONG, VARIED) & mengekstrak tema natural tanpa kalimat CP/TP
     function createContextualStimulusGroups(totalQuestions, maxPerStimulus, subject, grade, topic, selectedStimTypes = [], stimulusLength = "LONG") {
       const groupSize = Math.max(1, Math.min(3, Number(maxPerStimulus) || 3));
       const numGroups = Math.ceil(totalQuestions / groupSize);
-      const rawSubtopics = topic
-        .split(/[,;.\n]+/)
-        .map(s => s.trim())
-        .filter(Boolean);
-
-      if (rawSubtopics.length === 0) rawSubtopics.push(subject);
+      const rawSubtopics = extractNaturalSubtopicsList(topic, subject);
 
       const activeStimTypes = (Array.isArray(selectedStimTypes) && selectedStimTypes.length > 0)
         ? selectedStimTypes
@@ -3256,11 +3379,11 @@ const firebaseConfig = {
 
       const groups = [];
       for (let g = 0; g < numGroups; g++) {
-        const sub = rawSubtopics[g % rawSubtopics.length];
+        const sub = cleanAdministrativeTopicPhrase(rawSubtopics[g % rawSubtopics.length], subject);
         const chosenStimType = activeStimTypes[g % activeStimTypes.length];
-        const stimMeta = STIMULUS_TYPE_META[chosenStimType] || STIMULUS_TYPE_META.TEKS_BACAAN;
 
         const bodyText = buildStimulusTextByLength(sub, chosenStimType, stimulusLength, isEarlyGrade, g);
+        const naturalTitle = buildNaturalStimulusTitle(sub, chosenStimType, g);
 
         const startNo = g * groupSize + 1;
         const endNo = Math.min(totalQuestions, (g + 1) * groupSize);
@@ -3270,7 +3393,7 @@ const firebaseConfig = {
           subtopic: sub,
           startNo,
           endNo,
-          title: `Stimulus ${g + 1} (${stimMeta.label}): ${sub}`,
+          title: naturalTitle,
           text: bodyText
         });
       }
@@ -3522,21 +3645,22 @@ Ketentuan Wajib:
         const lvl = levelSequence[idx] || cogLevels[idx % cogLevels.length] || "C3";
         const groupIdx = Math.floor(idx / groupSize);
         const stimGroup = stimulusGroups[groupIdx] || stimulusGroups[0];
-        const subtopic = stimGroup.subtopic || topic;
-        const cpText = `Peserta didik (${grade}) memahami konsep esensial pada mata pelajaran ${subject} terkait "${subtopic}" serta penerapannya dalam konteks kehidupan sehari-hari.`;
-        const tpText = `Melalui pengamatan stimulus, peserta didik mampu ${cogVerbMap[lvl] || "menerapkan konsep"} mengenai "${subtopic}" dengan tepat (Level ${lvl}).`;
+        const subtopic = cleanAdministrativeTopicPhrase(stimGroup.subtopic || topic, subject);
+        const subLower = subtopic.toLowerCase();
+        const cpText = `Peserta didik (${grade}) memahami konsep esensial pada mata pelajaran ${subject} terkait ${subLower} serta penerapannya dalam konteks kehidupan sehari-hari.`;
+        const tpText = `Melalui pengamatan stimulus, peserta didik mampu ${cogVerbMap[lvl] || "menerapkan konsep"} mengenai ${subLower} dengan tepat (Level ${lvl}).`;
 
         if (qType === "PG") {
           const correctLetters = ["A", "B", "C", "D"];
           const correctLetter = correctLetters[idx % 4];
           const correctIdx = idx % 4;
           const baseOptions = [
-            `Mengabaikan keseimbangan variabel utama pada ${subtopic} sehingga memicu gangguan sistem`,
-            `Menggunakan asumsi sepihak tanpa mengacu pada data hasil pengamatan stimulus`,
-            `Menyimpulkan fenomena ${subtopic} secara tergesa-gesa tanpa verifikasi ilmiah`,
-            `Memisahkan hubungan sebab-akibat antara komponen utama dalam ${subtopic}`
+            `Mengabaikan keseimbangan komponen utama pada ${subLower} sehingga memicu gangguan fungsi`,
+            `Menggunakan perkiraan sepihak tanpa memperhatikan fakta pada bacaan di atas`,
+            `Menyimpulkan peristiwa terkait ${subLower} secara tergesa-gesa tanpa pengamatan teliti`,
+            `Memisahkan keterkaitan antara bagian-bagian penting yang bekerja pada ${subLower}`
           ];
-          baseOptions[correctIdx] = `Menerapkan prinsip pada "${subtopic}" secara tepat sesuai informasi pada stimulus untuk menjaga keseimbangan dan hasil terbaik`;
+          baseOptions[correctIdx] = `Menjaga keteraturan dan fungsi setiap bagian pada ${subLower} sesuai informasi pada bacaan agar tetap berjalan seimbang`;
 
           questions.push({
             number: qNum,
@@ -3549,23 +3673,23 @@ Ketentuan Wajib:
             cp: cpText,
             tp: tpText,
             subtopic,
-            indicator: `Disajikan stimulus (${STIMULUS_TYPE_META[stimGroup.stimulusType]?.label || "Wacana"}) tentang "${subtopic}", peserta didik dapat menganalisis konsep yang tepat (Level ${lvl}).`,
-            questionText: `Berdasarkan informasi pada wacana/stimulus di atas, pernyataan atau langkah manakah yang paling tepat berkaitan dengan "${subtopic}"?`,
+            indicator: `Disajikan stimulus (${STIMULUS_TYPE_META[stimGroup.stimulusType]?.label || "Wacana"}) tentang ${subLower}, peserta didik dapat menganalisis konsep yang tepat (Level ${lvl}).`,
+            questionText: `Berdasarkan bacaan di atas, pernyataan atau tindakan manakah yang paling tepat berkaitan dengan ${subLower}?`,
             options: baseOptions,
             matchingPairs: [],
             correctAnswer: correctLetter,
-            explanation: `Opsi ${correctLetter} benar karena sesuai dengan informasi pada "${stimGroup.title}" serta konsep ${subtopic}.`,
+            explanation: `Opsi ${correctLetter} benar karena sesuai dengan informasi pada bacaan "${stimGroup.title}" mengenai ${subLower}.`,
             points: 5
           });
         } else if (qType === "PGK") {
           const falsePos = idx % 4;
           const statements = [
-            `Penerapan konsep "${subtopic}" yang tepat berdampak positif terhadap keseimbangan seperti diceritakan pada stimulus.`,
-            `Informasi pada stimulus menunjukkan pentingnya ketelitian dan kepedulian terhadap kondisi sekitar.`,
-            `Kerja sama dan tindakan nyata sangat diperlukan agar pemanfaatan "${subtopic}" memberikan manfaat berkelanjutan.`,
-            `Keberhasilan penerapan pada peristiwa di atas sangat bergantung pada keteraturan antar-komponen yang terlibat.`
+            `Setiap bagian pada ${subLower} bekerja saling mendukung untuk menjaga keseimbangan sebagaimana dijelaskan pada bacaan.`,
+            `Informasi pada bacaan di atas menunjukkan pentingnya ketelitian dan kepedulian terhadap kondisi sekitar.`,
+            `Kebiasaan positif dan pemeliharaan teratur sangat diperlukan agar fungsi ${subLower} tetap terjaga dengan baik.`,
+            `Apabila salah satu bagian utama terganggu, maka proses pada ${subLower} secara keseluruhan ikut terpengaruh.`
           ];
-          statements[falsePos] = `Seluruh perubahan yang terjadi pada "${subtopic}" berlangsung tanpa sebab dan tidak memerlukan perhatian sama sekali.`;
+          statements[falsePos] = `Seluruh perubahan yang terjadi pada ${subLower} berlangsung tanpa sebab dan tidak memerlukan perhatian sama sekali.`;
 
           const correctIndices = [0, 1, 2, 3].filter(i => i !== falsePos);
           const correctLabels = correctIndices.map(i => `Pernyataan ${i + 1}`).join(", ");
@@ -3581,8 +3705,8 @@ Ketentuan Wajib:
             cp: cpText,
             tp: tpText,
             subtopic,
-            indicator: `Disajikan stimulus tentang "${subtopic}", peserta didik dapat memilih lebih dari 2 pernyataan benar (minimal 3 pernyataan benar dari 4 opsi) pada level ${lvl}.`,
-            questionText: `Berdasarkan stimulus di atas, tentukan manakah pernyataan berikut yang BENAR mengenai "${subtopic}"! (Pilih lebih dari 2 jawaban benar / minimal 3 pernyataan benar!)`,
+            indicator: `Disajikan stimulus tentang ${subLower}, peserta didik dapat memilih lebih dari 2 pernyataan benar (minimal 3 pernyataan benar dari 4 opsi) pada level ${lvl}.`,
+            questionText: `Berdasarkan bacaan di atas, tentukan manakah pernyataan berikut yang BENAR mengenai ${subLower}! (Pilih lebih dari 2 jawaban benar / minimal 3 pernyataan benar!)`,
             options: statements,
             matchingPairs: [],
             correctIndices,
@@ -3603,21 +3727,21 @@ Ketentuan Wajib:
             cp: cpText,
             tp: tpText,
             subtopic,
-            indicator: `Disajikan stimulus tentang "${subtopic}", peserta didik dapat menjodohkan 3 premis dengan 3 pilihan pasangan jawaban secara tepat (Level ${lvl}).`,
-            questionText: `Berdasarkan stimulus di atas, pasangkanlah 3 Premis / Pernyataan pada lajur kiri dengan 3 Pilihan Pasangan Jawaban (A, B, atau C) yang tepat pada lajur kanan!`,
+            indicator: `Disajikan stimulus tentang ${subLower}, peserta didik dapat menjodohkan 3 premis dengan 3 pilihan pasangan jawaban secara tepat (Level ${lvl}).`,
+            questionText: `Berdasarkan bacaan di atas, pasangkanlah 3 Premis / Pernyataan pada lajur kiri dengan 3 Pilihan Pasangan Jawaban (A, B, atau C) yang tepat pada lajur kanan!`,
             options: [],
             matchingPairs: [
               {
-                premise: `1. Komponen Utama pada ${subtopic}`,
-                match: `A. Dasar pengambilan keputusan yang akurat sesuai data pengamatan`
+                premise: `1. Fungsi Bagian Utama pada ${subtopic}`,
+                match: `A. Dasar menentukan langkah perawatan yang tepat berdasarkan hasil pengamatan`
               },
               {
-                premise: `2. Analisis Data & Pengamatan Stimulus`,
-                match: `B. Menjamin manfaat berkelanjutan bagi warga dan lingkungan sekitar`
+                premise: `2. Hasil Pengamatan pada Bacaan`,
+                match: `B. Memberikan manfaat jangka panjang bagi kesehatan dan kelestarian sekitar`
               },
               {
-                premise: `3. Upaya Pelestarian & Penerapan Nyata`,
-                match: `C. Berperan langsung menjaga fungsi utama pada sistem ${subject}`
+                premise: `3. Kebiasaan Pemeliharaan Berkelanjutan`,
+                match: `C. Bekerja saling mendukung agar proses ${subLower} berjalan seimbang`
               }
             ],
             distractorOption: "",
@@ -3637,12 +3761,12 @@ Ketentuan Wajib:
             cp: cpText,
             tp: tpText,
             subtopic,
-            indicator: `Disajikan stimulus tentang "${subtopic}", peserta didik dapat mengidentifikasi istilah/konsep kunci dengan tepat (Level ${lvl}).`,
-            questionText: `Berdasarkan stimulus di atas, topik atau konsep utama yang sedang diamati untuk menjaga keseimbangan sistem tersebut adalah ....`,
+            indicator: `Disajikan stimulus tentang ${subLower}, peserta didik dapat mengidentifikasi istilah/konsep kunci dengan tepat (Level ${lvl}).`,
+            questionText: `Berdasarkan bacaan di atas, sistem atau fenomena utama yang dibahas agar keteraturan dan keseimbangannya tetap terjaga adalah ....`,
             options: [],
             matchingPairs: [],
             correctAnswer: subtopic,
-            explanation: `Jawaban yang tepat sesuai konteks stimulus dan materi pokok adalah ${subtopic}.`,
+            explanation: `Jawaban yang tepat sesuai konteks bacaan dan materi pokok adalah ${subtopic}.`,
             points: 5
           });
         } else {
@@ -3657,12 +3781,12 @@ Ketentuan Wajib:
             cp: cpText,
             tp: tpText,
             subtopic,
-            indicator: `Disajikan stimulus tentang "${subtopic}", peserta didik dapat menguraikan analisis dan solusi konkret pada level ${lvl}.`,
-            questionText: `Berdasarkan stimulus di atas, jelaskan mengapa "${subtopic}" sangat penting untuk dipahami, serta tuliskan 3 contoh penerapannya dalam kehidupan sehari-hari!`,
+            indicator: `Disajikan stimulus tentang ${subLower}, peserta didik dapat menguraikan analisis dan solusi konkret pada level ${lvl}.`,
+            questionText: `Berdasarkan bacaan di atas, mengapa menjaga keseimbangan ${subLower} sangat penting, serta tuliskan 3 contoh tindakan nyata yang dapat dilakukan dalam kehidupan sehari-hari!`,
             options: [],
             matchingPairs: [],
-            correctAnswer: `Penting karena menjaga keseimbangan sistem pada ${subtopic}. Tiga contoh penerapan: 1) Melakukan pengamatan dan pemeliharaan teratur, 2) Memanfaatkan sumber daya secara bijak, 3) Bekerja sama menjaga kelestarian lingkungan.`,
-            explanation: `Pedoman Penskoran: Menjelaskan alasan logis (40%) + menuliskan 3 contoh penerapan nyata sesuai konteks stimulus (60%).`,
+            correctAnswer: `Penting karena setiap bagian pada ${subLower} saling memengaruhi satu sama lain. Tiga contoh tindakan nyata: 1) Melakukan pengamatan dan perawatan secara teratur, 2) Menjaga kebersihan dan daya dukung lingkungan, 3) Menerapkan kebiasaan baik secara konsisten.`,
+            explanation: `Pedoman Penskoran: Menjelaskan alasan logis (40%) + menuliskan 3 contoh tindakan nyata sesuai konteks bacaan (60%).`,
             points: 10
           });
         }
@@ -3743,9 +3867,9 @@ Ketentuan Wajib:
 
         const level = (targetLevelSequence[idx] || sourceQ?.cognitiveLevel || "C3").toUpperCase();
         const validLevel = ["C1", "C2", "C3", "C4", "C5", "C6"].includes(level) ? level : "C3";
-        const defaultSubtopic = sourceQ?.subtopic || defaultGroup.subtopic || params.topic;
-        const defaultCp = sourceQ?.cp || `Peserta didik (${params.grade}) memahami konsep esensial ${params.subject} mengenai "${defaultSubtopic}" serta kaitannya dalam kehidupan sehari-hari.`;
-        const defaultTp = sourceQ?.tp || `Melalui pengamatan stimulus, peserta didik mampu menyelesaikan permasalahan terkait "${defaultSubtopic}" pada level kognitif ${validLevel}.`;
+        const defaultSubtopic = cleanAdministrativeTopicPhrase(sourceQ?.subtopic || defaultGroup.subtopic || params.topic, params.subject);
+        const defaultCp = sourceQ?.cp || `Peserta didik (${params.grade}) memahami konsep esensial ${params.subject} mengenai ${defaultSubtopic.toLowerCase()} serta kaitannya dalam kehidupan sehari-hari.`;
+        const defaultTp = sourceQ?.tp || `Melalui pengamatan stimulus, peserta didik mampu menyelesaikan permasalahan terkait ${defaultSubtopic.toLowerCase()} pada level kognitif ${validLevel}.`;
 
         let options = Array.isArray(sourceQ?.options) ? sourceQ.options.slice(0, 4) : [];
         let matchingPairs = Array.isArray(sourceQ?.matchingPairs) ? sourceQ.matchingPairs.slice(0, 3) : [];
@@ -3778,7 +3902,7 @@ Ketentuan Wajib:
           if (!correctAnswer) correctAnswer = "1 -> C, 2 -> A, 3 -> B";
         }
 
-        finalQuestions.push({
+        const builtQ = {
           number: idx + 1,
           type: desiredType,
           cognitiveLevel: validLevel,
@@ -3796,9 +3920,10 @@ Ketentuan Wajib:
           distractorOption: "",
           correctIndices,
           correctAnswer: String(correctAnswer),
-          explanation: sourceQ?.explanation || `Pembahasan mengacu pada stimulus grup ${groupIdx + 1} dan konsep ${defaultGroup.subtopic}.`,
+          explanation: sourceQ?.explanation || `Pembahasan mengacu pada bacaan "${groupStimulusTitle}" mengenai ${defaultSubtopic.toLowerCase()}.`,
           points: Number(sourceQ?.points) || Math.max(1, Math.round(100 / Math.max(1, totalRequested)))
-        });
+        };
+        finalQuestions.push(sanitizeExistingQuestionAdministrativeText(builtQ, params.subject));
       }
 
       // Ensure questions within the same stimulus group share identical stimulus text, type & title
@@ -3962,11 +4087,12 @@ Buatkan paket soal lengkap dalam format JSON murni dengan spesifikasi WAJIB beri
   ${stimulusLengthRule}
 - ATURAN GAYA BAHASA & KEBERAGAMAN STIMULUS (WAJIB DIPATUHI):
   1. DILARANG KERAS menggunakan frasa kaku seperti "Tim peneliti bersama peserta didik Fase B - SD/MI Kelas 4..." atau menyebutkan nama Fase/Kelas/Mata Pelajaran di dalam cerita stimulus!
-  2. Gunakan tokoh dengan nama alami (misal: Damar, Kirana, Bagas, Nisa, Pak Rahmat, Ibu Sari, warga Desa Sukamaju) atau tokoh hewan jika bertipe Cerita Fabel (misal: Kiki si Kelinci, Boni si Tupai, Pipit si Burung Kecil di Hutan Rimba).
-  3. Variasikan genre stimulus secara menarik antara: Cerita Fabel / Dongeng Hewan yang relevan dengan materi, Cerita Anak / Fiksi kehidupan sehari-hari, serta Teks Non-Fiksi / Artikel Sains & Sosial populer, Infografis, Tabel, dan Kasus Kontekstual.
-  4. Setiap 1 stimulus MAKSIMAL hanya boleh digunakan untuk ${maxPerStimulus} soal!
-  5. Karena total soal adalah ${quotas.total} butir, Anda WAJIB membuat ${totalStimulusCount} grup stimulus berbeda (Grup 1 untuk soal 1-${Math.min(maxPerStimulus, quotas.total)}, Grup 2 untuk soal berikutnya, dst.) dengan mengisi "stimulusType" secara bervariasi sesuai daftar [${stimulusTypes.join(", ")}].
-  6. Soal Isian Singkat ("ISIAN") dan Uraian ("URAIAN") WAJIB berada di nomor paling akhir secara berurutan! Urutan jenis soal & level kognitif untuk nomor 1 sampai ${quotas.total} WAJIB mengikuti daftar ini: ${targetTypeSequence.map((t, i) => `No.${i + 1}=${t}(${targetLevelSequence[i]})`).join(", ")}.
+  2. DILARANG KERAS menyalin mentah kalimat "Capaian Pembelajaran (CP): Peserta didik mampu..." atau "Tujuan Pembelajaran (TP): ..." ke dalam Judul Stimulus ("stimulusTitle"), Teks Wacana ("stimulus"), Pokok Pertanyaan ("questionText"), maupun Opsi Jawaban! Kalimat CP dan TP HANYA boleh diletakkan pada field "cp" dan "tp" untuk tabel Kisi-Kisi. Untuk "stimulusTitle", "stimulus", dan "questionText", ubah menjadi Judul Bacaan & Cerita/Artikel yang 100% NATURAL sesuai tema (contoh judul natural: "Peran Jantung dalam Sistem Peredaran Darah", "Menjaga Keseimbangan Ekosistem Sawah", "Kisah Pipit di Hutan Rimba").
+  3. Gunakan tokoh dengan nama alami (misal: Damar, Kirana, Bagas, Nisa, Pak Rahmat, Ibu Sari, warga Desa Sukamaju) atau tokoh hewan jika bertipe Cerita Fabel (misal: Kiki si Kelinci, Boni si Tupai, Pipit si Burung Kecil di Hutan Rimba).
+  4. Variasikan genre stimulus secara menarik antara: Cerita Fabel / Dongeng Hewan yang relevan dengan materi, Cerita Anak / Fiksi kehidupan sehari-hari, serta Teks Non-Fiksi / Artikel Sains & Sosial populer, Infografis, Tabel, dan Kasus Kontekstual.
+  5. Setiap 1 stimulus MAKSIMAL hanya boleh digunakan untuk ${maxPerStimulus} soal!
+  6. Karena total soal adalah ${quotas.total} butir, Anda WAJIB membuat ${totalStimulusCount} grup stimulus berbeda (Grup 1 untuk soal 1-${Math.min(maxPerStimulus, quotas.total)}, Grup 2 untuk soal berikutnya, dst.) dengan mengisi "stimulusType" secara bervariasi sesuai daftar [${stimulusTypes.join(", ")}].
+  7. Soal Isian Singkat ("ISIAN") dan Uraian ("URAIAN") WAJIB berada di nomor paling akhir secara berurutan! Urutan jenis soal & level kognitif untuk nomor 1 sampai ${quotas.total} WAJIB mengikuti daftar ini: ${targetTypeSequence.map((t, i) => `No.${i + 1}=${t}(${targetLevelSequence[i]})`).join(", ")}.
 - Rincian Jumlah Soal (WAJIB TEPAT ${quotas.total} butir soal):
   1. Pilihan Ganda Biasa (type: "PG"): ${quotas.pg} soal. WAJIB 4 opsi jawaban (tanpa huruf A/B/C/D di awal teks opsi), 1 jawaban benar ("A", "B", "C", atau "D").
   2. Pilihan Ganda Kompleks (type: "PGK"): ${quotas.pgk} soal. WAJIB 4 opsi pernyataan, dan WAJIB LEBIH DARI 2 JAWABAN BENAR (minimal 3 pernyataan harus bernilai BENAR dari 4 opsi yang tersedia! Isi correctIndices misal [0,1,2] dan correctAnswer misal "Pernyataan 1, Pernyataan 2, dan Pernyataan 3").
@@ -4152,6 +4278,8 @@ Struktur JSON Output yang WAJIB dikembalikan (harus berisi tepat ${quotas.total}
       }
 
       const qs = activePackage.questions;
+      // Bersihkan otomatis jika paket soal saat ini masih memuat teks "Capaian Pembelajaran (CP): Peserta didik mampu..." di dalam stimulus/soal
+      qs.forEach(q => sanitizeExistingQuestionAdministrativeText(q, activePackage.subject));
       const maxPerStimulus = Number(activePackage.maxPerStimulus) || 3;
       const stimRangeMap = computeStimulusRangeMap(qs, maxPerStimulus);
       const totalStimulusBoxes = Object.values(stimRangeMap).filter(v => v.isStart).length;
